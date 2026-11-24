@@ -1,0 +1,3899 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>StageTrack Live — Reproductor Multitrack para Escenario</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+  <!-- JSZip para descomprimir secuencias .zip en el navegador -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <!-- Signalsmith Stretch: Motor Studio C++/WASM Phase Vocoder con preservación de formantes -->
+  <script src="https://cdn.jsdelivr.net/npm/signalsmith-stretch@1.3.2/SignalsmithStretch.js"></script>
+  <!-- Google Identity Services para OAuth con Google Drive -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            stage: {
+              bg: '#0d1117',
+              panel: '#161b22',
+              control: '#1f2937',
+              border: '#262f3d',
+              cyan: '#00d2ff',
+              coral: '#ff4757',
+            }
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: #0d1117;
+      color: #f3f4f6;
+      font-family: 'Inter', sans-serif;
+      overflow-x: hidden;
+      user-select: none;
+    }
+
+    /* Scrollbars personalizados estilo consola */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0d1117;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2d3748;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #4a5568;
+    }
+
+    /* Fader táctil vertical estilo Prime MultiTrack */
+    .fader-track {
+      touch-action: none;
+      position: relative;
+      overflow: hidden;
+      cursor: ns-resize;
+    }
+
+    /* Slider horizontal de paneo */
+    input[type="range"].pan-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      background: #0d1117;
+      height: 6px;
+      border-radius: 999px;
+      outline: none;
+      border: 1px solid #2d3748;
+    }
+    input[type="range"].pan-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #e2e8f0;
+      cursor: pointer;
+      border: 2px solid #0d1117;
+    }
+
+    /* Slider horizontal Master */
+    input[type="range"].master-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      background: #0d1117;
+      height: 10px;
+      border-radius: 999px;
+      outline: none;
+      border: 1px solid #2d3748;
+    }
+    input[type="range"].master-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      background: #00d2ff;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(0, 210, 255, 0.5);
+    }
+
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0, 210, 255, 0.4); }
+      50% { box-shadow: 0 0 14px 2px rgba(0, 210, 255, 0.25); }
+    }
+    .playing-glow {
+      animation: pulseGlow 2s infinite;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-[#0d1117] text-gray-100">
+
+  <!-- ===================================================================== -->
+  <!-- BARRA SUPERIOR DE TRANSPORTE Y CONTROLES MAESTROS                     -->
+  <!-- ===================================================================== -->
+  <header class="sticky top-0 z-30 bg-[#161b22] border-b border-[#262f3d] px-3 py-2.5 shadow-xl">
+    <div class="max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-2.5">
+
+      <!-- 1. Marca + Control MASTER -->
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="flex items-center gap-2 pr-2 border-r border-[#262f3d]">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-[#00d2ff] to-blue-600 flex items-center justify-center shadow-lg shadow-[#00d2ff]/20">
+            <svg class="w-5 h-5 text-[#0d1117]" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+            </svg>
+          </div>
+          <div class="hidden sm:block">
+            <div class="text-sm font-extrabold tracking-tight leading-none text-white">StageTrack <span class="text-[#00d2ff]">Live</span></div>
+            <div id="offlineStatsBadge" class="text-[11px] text-gray-400 font-medium mt-0.5">0 canciones • 0 MB</div>
+          </div>
+        </div>
+
+        <!-- Bloque MASTER Fader -->
+        <div class="flex items-center gap-2.5 bg-[#1f2937] px-3 py-2 rounded-xl border border-[#2d3748]">
+          <span class="text-xs font-extrabold tracking-wider text-[#00d2ff]">MASTER</span>
+          <input id="masterVolumeSlider" type="range" min="0" max="1.2" step="0.01" value="1" class="master-slider w-24 sm:w-28" title="Volumen General Master" />
+          <span id="masterVolumeLabel" class="font-mono text-xs font-bold text-gray-200 w-9 text-right">100%</span>
+          <div class="w-2 h-6 bg-[#0d1117] rounded-full overflow-hidden flex flex-col justify-end border border-gray-800">
+            <div id="masterMeterFill" class="w-full bg-gradient-to-t from-emerald-400 via-[#00d2ff] to-[#ff4757] transition-all duration-75" style="height: 0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Botones de Transporte (Anterior, Play/Pausa, Stop, Siguiente, Loop) -->
+      <div class="flex items-center gap-1.5 sm:gap-2">
+        <button id="btnPrevSong" class="h-11 w-11 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 flex items-center justify-center text-gray-200 border border-[#2d3748] transition" title="Canción anterior del setlist">
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+        </button>
+
+        <button id="btnPlayPause" class="h-11 px-5 rounded-xl bg-white hover:bg-gray-100 active:scale-95 text-[#0d1117] font-extrabold flex items-center justify-center gap-2 shadow-lg transition" title="Reproducir / Pausar (Barra Espaciadora)">
+          <svg id="iconPlay" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          <svg id="iconPause" class="w-5 h-5 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          <span id="labelPlayPause" class="text-xs sm:text-sm tracking-wide">PLAY</span>
+        </button>
+
+        <button id="btnStop" class="h-11 w-11 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 flex items-center justify-center text-gray-200 border border-[#2d3748] transition" title="Detener y volver al inicio">
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+        </button>
+
+        <button id="btnNextSong" class="h-11 w-11 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 flex items-center justify-center text-gray-200 border border-[#2d3748] transition" title="Siguiente canción del setlist">
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+
+        <button id="btnLoop" class="h-11 w-11 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 flex items-center justify-center text-gray-400 border border-[#2d3748] transition" title="Repetir canción en bucle">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- 3. Pantalla Digital: Tiempo, BPM Real-Time y Tonalidad Real-Time -->
+      <div class="flex items-center gap-2 bg-[#0d1117] px-2.5 py-1.5 rounded-xl border border-[#262f3d] flex-wrap">
+        <div class="font-mono text-base sm:text-lg font-bold tracking-tight text-white px-1">
+          <span id="timeElapsed" class="text-[#00d2ff]">00:00</span>
+          <span class="text-gray-500 mx-0.5">/</span>
+          <span id="timeTotal" class="text-gray-300">00:00</span>
+        </div>
+
+        <div class="h-8 w-[1px] bg-[#262f3d]"></div>
+
+        <!-- Control Real-Time de BPM -->
+        <div class="flex items-center gap-1 bg-[#161b22] px-1.5 py-1 rounded-xl border border-[#262f3d]">
+          <button id="btnBpmDown" type="button" class="w-8 h-8 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 text-white font-extrabold text-sm flex items-center justify-center transition" title="Bajar 1 BPM">−</button>
+          <button id="btnEditBpm" type="button" class="px-2 py-0.5 rounded-lg hover:bg-[#1f2937] text-center transition min-w-[54px]" title="Clic para escribir BPM exacto">
+            <div id="displayBpm" class="font-mono text-xs sm:text-sm font-bold text-white leading-tight">120</div>
+            <div id="displayBpmSub" class="text-[9px] font-bold tracking-wider text-gray-400 uppercase">BPM</div>
+          </button>
+          <button id="btnBpmUp" type="button" class="w-8 h-8 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 text-white font-extrabold text-sm flex items-center justify-center transition" title="Subir 1 BPM">+</button>
+          <button id="btnBpmReset" type="button" class="hidden w-7 h-8 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 font-bold text-xs flex items-center justify-center transition" title="Restaurar BPM original">↺</button>
+        </div>
+
+        <!-- Control Real-Time de TONO / Semitonos (Instrumentos transpuestos, Click intacto) -->
+        <div class="flex items-center gap-1 bg-[#161b22] px-1.5 py-1 rounded-xl border border-[#262f3d]">
+          <button id="btnPitchDown" type="button" class="w-8 h-8 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 text-white font-extrabold text-xs flex items-center justify-center transition" title="Bajar 1 semitono (-1 ST)">-1</button>
+          <button id="btnEditKey" type="button" class="px-2 py-0.5 rounded-lg hover:bg-[#1f2937] text-center transition min-w-[66px]" title="Clic para definir tonalidad base">
+            <div id="displayKey" class="font-mono text-xs sm:text-sm font-bold text-[#00d2ff] leading-tight">—</div>
+            <div id="displayPitchSub" class="text-[9px] font-bold tracking-wider text-gray-400 uppercase">0 ST</div>
+          </button>
+          <button id="btnPitchUp" type="button" class="w-8 h-8 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 text-white font-extrabold text-xs flex items-center justify-center transition" title="Subir 1 semitono (+1 ST)">+1</button>
+          <button id="btnPitchReset" type="button" class="hidden w-7 h-8 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 font-bold text-xs flex items-center justify-center transition" title="Restaurar tono original (0 semitonos)">↺</button>
+        </div>
+      </div>
+
+      <!-- 4. Modos de Salida En Vivo y Acciones Principales -->
+      <div class="flex items-center gap-2 flex-wrap">
+        <!-- Switch Ruteo Split En Vivo (Click L / Pistas R) -->
+        <div class="flex items-center bg-[#0d1117] p-1 rounded-xl border border-[#262f3d]" title="Separa el Click a la izquierda (L) y los instrumentos a la derecha (R) para usar cable Y-splitter en vivo">
+          <button id="btnSplitLive" class="px-2.5 py-2 rounded-lg text-xs font-bold text-gray-300 hover:text-white transition flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-[#ff4757]"></span>
+            <span>Split En Vivo (Click L / Pistas R)</span>
+          </button>
+          <button id="btnStereoCenter" class="px-2.5 py-2 rounded-lg text-xs font-extrabold bg-[#1f2937] text-[#00d2ff] transition">
+            Estéreo
+          </button>
+        </div>
+
+        <!-- Botón Google Drive Cloud -->
+        <button id="btnOpenDriveModal" class="h-11 px-3.5 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 text-white font-bold text-xs sm:text-sm border border-[#2d3748] flex items-center gap-2 transition">
+          <svg class="w-4 h-4 text-[#00d2ff]" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>
+          </svg>
+          <span>Google Drive</span>
+        </button>
+
+        <!-- Botón Importar ZIP Local -->
+        <button id="btnImportLocalZip" class="h-11 px-3.5 rounded-xl bg-[#00d2ff] hover:bg-[#00b8e6] active:scale-95 text-[#0d1117] font-extrabold text-xs sm:text-sm flex items-center gap-1.5 shadow-lg shadow-[#00d2ff]/20 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+          </svg>
+          <span>Importar .ZIP</span>
+        </button>
+        <input id="localZipInput" type="file" accept=".zip,application/zip" multiple class="hidden" />
+
+        <!-- Botón Canción Demo -->
+        <button id="btnLoadDemoTop" class="h-11 px-3 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] active:scale-95 text-emerald-400 font-bold text-xs border border-emerald-500/30 transition" title="Cargar secuencia de demostración multitrack">
+          Canción Demo
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================================================================== -->
+  <!-- SECCIÓN DE FORMA DE ONDA / LÍNEA DE TIEMPO INTERACTIVA                -->
+  <!-- ===================================================================== -->
+  <section class="bg-[#161b22] border-b border-[#262f3d] px-3 py-2.5">
+    <div class="max-w-[1920px] mx-auto">
+      <div class="flex items-center justify-between gap-2 mb-1.5 px-1">
+        <div class="flex items-center gap-2 min-w-0">
+          <span id="activeSongIndicator" class="w-2.5 h-2.5 rounded-full bg-gray-600 shrink-0"></span>
+          <h1 id="activeSongTitle" class="text-sm sm:text-base font-extrabold text-white truncate">
+            Ninguna canción cargada
+          </h1>
+          <span id="activeSongMetaBadge" class="hidden text-xs font-mono text-[#00d2ff] bg-[#00d2ff]/10 px-2 py-0.5 rounded-md border border-[#00d2ff]/30 shrink-0">
+            0 pistas
+          </span>
+        </div>
+        <div class="text-[11px] text-gray-400 hidden md:block">
+          Haz clic o arrastra sobre la línea de tiempo para adelantar/retroceder
+        </div>
+      </div>
+
+      <!-- Contenedor Canvas Waveform Interactivo -->
+      <div id="waveformContainer" class="relative w-full h-20 sm:h-24 bg-[#0d1117] rounded-xl border border-[#262f3d] overflow-hidden cursor-pointer touch-none">
+        <canvas id="waveformCanvas" class="w-full h-full block"></canvas>
+        <div id="waveformEmptyHint" class="absolute inset-0 flex items-center justify-center pointer-events-none text-xs sm:text-sm text-gray-500 font-medium">
+          Importa un archivo .ZIP, descárgalo desde Google Drive o pulsa "Canción Demo"
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- ÁREA PRINCIPAL: MEZCLADOR DE CANALES (IZQ) + SETLISTS/BIBLIOTECA (DER)-->
+  <!-- ===================================================================== -->
+  <main class="flex-1 max-w-[1920px] w-full mx-auto p-3 grid grid-cols-1 lg:grid-cols-12 gap-3.5">
+
+    <!-- PANEL IZQUIERDO: MEZCLADOR MULTITRACK (8 columnas en desktop) -->
+    <section class="lg:col-span-8 xl:col-span-9 bg-[#161b22] rounded-2xl border border-[#262f3d] p-3 sm:p-4 flex flex-col min-h-[440px]">
+      <div class="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b border-[#262f3d]">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h2 class="text-xs font-extrabold uppercase tracking-wider text-gray-400">Mezclador de Instrumentos</h2>
+          <span id="activeTracksCounter" class="text-xs font-mono bg-[#1f2937] text-[#00d2ff] px-2 py-0.5 rounded-md font-bold">0 canales</span>
+          <span id="dspEngineBadge" class="hidden text-[11px] font-mono bg-amber-500/15 text-amber-300 border border-amber-500/35 px-2 py-0.5 rounded-md font-bold">DSP Studio Activo</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btnUnmuteAll" class="px-3 py-1.5 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] text-xs font-bold text-gray-300 border border-[#2d3748] transition">
+            Activar Todos (Unmute)
+          </button>
+          <button id="btnClearSolo" class="px-3 py-1.5 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] text-xs font-bold text-gray-300 border border-[#2d3748] transition">
+            Quitar Solo
+          </button>
+        </div>
+      </div>
+
+      <!-- Grid de Faders por Instrumento -->
+      <div id="mixerGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3 flex-1 items-stretch">
+        <!-- Estado vacío inicial -->
+        <div class="col-span-full flex flex-col items-center justify-center text-center py-12 px-4 border-2 border-dashed border-[#262f3d] rounded-2xl">
+          <div class="w-16 h-16 rounded-2xl bg-[#1f2937] flex items-center justify-center mb-4 text-[#00d2ff]">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-bold text-white mb-1">Listo para el escenario</h3>
+          <p class="text-sm text-gray-400 max-w-md mb-5">
+            Sube un archivo <code class="text-[#00d2ff]">.zip</code> con tus pistas individuales en MP3/WAV, sincroniza tu carpeta de Google Drive o prueba el motor ahora mismo con la canción de demostración.
+          </p>
+          <div class="flex flex-wrap items-center justify-center gap-3">
+            <button id="btnLoadDemoEmpty" class="px-5 py-3 rounded-xl bg-[#00d2ff] hover:bg-[#00b8e6] text-[#0d1117] font-extrabold text-sm shadow-lg shadow-[#00d2ff]/20 transition">
+              Cargar Canción Demo (6 Pistas)
+            </button>
+            <button id="btnImportEmpty" class="px-5 py-3 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] text-white font-bold text-sm border border-[#2d3748] transition">
+              + Seleccionar .ZIP Local
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PANEL DERECHO: GESTOR DE SETLISTS Y BIBLIOTECA OFFLINE (4 columnas en desktop) -->
+    <aside class="lg:col-span-4 xl:col-span-3 bg-[#161b22] rounded-2xl border border-[#262f3d] p-3 sm:p-4 flex flex-col gap-3 min-h-[440px]">
+      <!-- Cabecera Setlist -->
+      <div class="flex items-center justify-between gap-1.5">
+        <div class="flex items-center gap-1.5 flex-1 min-w-0">
+          <select id="setlistSelect" class="w-full bg-[#1f2937] text-white font-bold text-sm px-3 py-2.5 rounded-xl border border-[#2d3748] focus:outline-none focus:border-[#00d2ff] truncate">
+            <!-- Opciones generadas dinámicamente -->
+          </select>
+        </div>
+        <button id="btnNewSetlist" class="h-10 px-2.5 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] text-[#00d2ff] font-bold text-xs border border-[#2d3748] shrink-0 transition" title="Crear nuevo Setlist">
+          + Nuevo
+        </button>
+        <button id="btnShareSetlist" class="h-10 px-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 font-bold text-xs border border-emerald-500/35 shrink-0 flex items-center gap-1 transition" title="Compartir este Setlist con el grupo">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.3" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+          </svg>
+          <span>Compartir</span>
+        </button>
+        <button id="btnDeleteSetlist" class="h-10 w-9 rounded-xl bg-[#1f2937] hover:bg-red-950/60 text-gray-400 hover:text-[#ff4757] border border-[#2d3748] flex items-center justify-center shrink-0 transition" title="Eliminar Setlist actual">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Pestañas Setlist Activo / Biblioteca Offline -->
+      <div class="grid grid-cols-2 bg-[#0d1117] p-1 rounded-xl border border-[#262f3d]">
+        <button id="tabSetlistView" class="py-2 rounded-lg text-xs font-extrabold bg-[#1f2937] text-[#00d2ff] transition">
+          Setlist Activo (<span id="setlistCountBadge">0</span>)
+        </button>
+        <button id="tabLibraryView" class="py-2 rounded-lg text-xs font-extrabold text-gray-400 hover:text-white transition">
+          Biblioteca (<span id="libraryCountBadge">0</span>)
+        </button>
+      </div>
+
+      <!-- Buscador de Biblioteca Offline (visible en pestaña Biblioteca) -->
+      <div id="librarySearchWrapper" class="hidden">
+        <input id="librarySearchInput" type="text" placeholder="Buscar canción offline por nombre o tono..." class="w-full bg-[#0d1117] border border-[#2d3748] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00d2ff]" />
+      </div>
+
+      <!-- Lista de Canciones del Setlist Activo -->
+      <div id="setlistSongsContainer" class="flex-1 overflow-y-auto space-y-2 pr-0.5 max-h-[540px]">
+        <!-- Renderizado dinámico -->
+      </div>
+
+      <!-- Lista de Toda la Biblioteca Offline -->
+      <div id="librarySongsContainer" class="hidden flex-1 overflow-y-auto space-y-2 pr-0.5 max-h-[540px]">
+        <!-- Renderizado dinámico -->
+      </div>
+
+      <!-- Pie del panel derecho: Acciones rápidas -->
+      <div class="pt-2 border-t border-[#262f3d] flex items-center justify-between gap-2 text-xs text-gray-400">
+        <button id="btnImportSetlistFile" class="text-gray-300 hover:text-[#00d2ff] font-bold flex items-center gap-1 transition" title="Cargar archivo .stagetrack.json compartido">
+          <span>📥 Importar Setlist</span>
+        </button>
+        <input id="setlistFileInput" type="file" accept=".json,application/json" class="hidden" />
+        <button id="btnAddFromLibraryToSetlist" class="text-[#00d2ff] hover:underline font-bold">
+          + Agregar canciones
+        </button>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL: COMPARTIR SETLIST CON EL GRUPO                                 -->
+  <!-- ===================================================================== -->
+  <div id="shareSetlistModal" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+    <div class="bg-[#161b22] border border-[#2d3748] rounded-2xl w-full max-w-xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+      <!-- Cabecera -->
+      <div class="px-5 py-4 border-b border-[#262f3d] flex items-center justify-between bg-[#1f2937]/50">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+            </svg>
+          </div>
+          <div>
+            <h2 id="shareSetlistTitleDisplay" class="text-base sm:text-lg font-extrabold text-white">Compartir Setlist</h2>
+            <p id="shareSetlistSummaryDisplay" class="text-xs text-gray-400">0 canciones listas para compartir</p>
+          </div>
+        </div>
+        <button id="btnCloseShareModal" class="w-9 h-9 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] text-gray-300 flex items-center justify-center">
+          ✕
+        </button>
+      </div>
+
+      <!-- Cuerpo -->
+      <div class="p-5 overflow-y-auto space-y-4">
+        <!-- Opción 1: Enlace Mágico -->
+        <div class="bg-[#0d1117] p-4 rounded-xl border border-[#262f3d] space-y-2.5">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-extrabold uppercase tracking-wider text-[#00d2ff]">1. Enlace Directo del Setlist</span>
+            <span class="text-[11px] text-gray-400">Ideal para abrir en iPad / Móvil</span>
+          </div>
+          <p class="text-xs text-gray-400">
+            Cuando otro músico abra este enlace en su navegador o app, recibirá este setlist ordenado con tonalidades, BPM y descarga directa desde Google Drive.
+          </p>
+          <div class="flex gap-2">
+            <input id="shareUrlInput" type="text" readonly class="flex-1 bg-[#161b22] border border-[#2d3748] rounded-xl px-3 py-2 text-xs text-emerald-400 font-mono focus:outline-none" />
+            <button id="btnCopyShareUrl" class="px-4 py-2 rounded-xl bg-[#00d2ff] hover:bg-[#00b8e6] text-[#0d1117] font-extrabold text-xs shrink-0 transition">
+              Copiar Link
+            </button>
+          </div>
+        </div>
+
+        <!-- Opción 2: Descargar archivo .stagetrack.json -->
+        <div class="bg-[#0d1117] p-4 rounded-xl border border-[#262f3d] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="space-y-1">
+            <div class="text-xs font-extrabold uppercase tracking-wider text-amber-400">2. Archivo de Setlist (.JSON)</div>
+            <p class="text-xs text-gray-400">
+              Guárdalo en tu carpeta compartida de Google Drive o envíalo por WhatsApp / AirDrop.
+            </p>
+          </div>
+          <button id="btnExportSetlistJson" class="px-4 py-2.5 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] border border-[#2d3748] text-xs font-extrabold text-white shrink-0 transition">
+            ⬇ Descargar .JSON
+          </button>
+        </div>
+
+        <!-- Opción 3: Lista en Texto para WhatsApp -->
+        <div class="bg-[#0d1117] p-4 rounded-xl border border-[#262f3d] space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-extrabold uppercase tracking-wider text-emerald-400">3. Lista en Texto (WhatsApp)</span>
+            <button id="btnCopyWhatsappText" class="text-xs font-bold text-[#00d2ff] hover:underline">Copiar texto</button>
+          </div>
+          <textarea id="shareWhatsappText" rows="4" readonly class="w-full bg-[#161b22] border border-[#2d3748] rounded-xl p-2.5 text-xs font-mono text-gray-300 focus:outline-none resize-none"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL: RECIBIR / IMPORTAR SETLIST COMPARTIDO                          -->
+  <!-- ===================================================================== -->
+  <div id="incomingSetlistModal" class="fixed inset-0 z-50 hidden bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+    <div class="bg-[#161b22] border border-[#00d2ff]/50 rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-[#262f3d] flex items-center justify-between bg-[#00d2ff]/10">
+        <div>
+          <span class="text-[10px] font-extrabold uppercase tracking-widest text-[#00d2ff]">Setlist Compartido Recibido</span>
+          <h2 id="incomingSetlistTitle" class="text-base sm:text-lg font-extrabold text-white mt-0.5">Nombre del Setlist</h2>
+          <p id="incomingSetlistSubtitle" class="text-xs text-gray-300">0 canciones en este repertorio</p>
+        </div>
+        <button id="btnCloseIncomingModal" class="w-9 h-9 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] text-gray-300 flex items-center justify-center">
+          ✕
+        </button>
+      </div>
+
+      <div class="p-5 overflow-y-auto space-y-3 flex-1">
+        <div id="incomingSetlistSongsList" class="space-y-2">
+          <!-- Canciones del setlist compartido -->
+        </div>
+      </div>
+
+      <div class="px-5 py-3.5 border-t border-[#262f3d] bg-[#0d1117] flex items-center justify-between gap-3">
+        <span class="text-[11px] text-gray-400">Las canciones faltantes pueden descargarse desde Google Drive.</span>
+        <button id="btnSaveIncomingSetlist" class="px-5 py-2.5 rounded-xl bg-[#00d2ff] hover:bg-[#00b8e6] text-[#0d1117] font-extrabold text-xs sm:text-sm shrink-0 transition">
+          Guardar Setlist en mi App
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL: EXPLORADOR DE GOOGLE DRIVE (CARPETAS, COMPARTIDOS Y .ZIP)      -->
+  <!-- ===================================================================== -->
+  <div id="driveModal" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+    <div class="bg-[#161b22] border border-[#2d3748] rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+      <!-- Cabecera Modal -->
+      <div class="px-5 py-4 border-b border-[#262f3d] flex items-center justify-between bg-[#1f2937]/50">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-[#00d2ff]/15 text-[#00d2ff] flex items-center justify-center">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>
+            </svg>
+          </div>
+          <div>
+            <h2 class="text-base sm:text-lg font-extrabold text-white">Explorador de Google Drive</h2>
+            <p class="text-xs text-gray-400">Navega por tus carpetas o compartidos y descarga tus secuencias .ZIP</p>
+          </div>
+        </div>
+        <button id="btnCloseDriveModal" class="w-9 h-9 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] text-gray-300 flex items-center justify-center">
+          ✕
+        </button>
+      </div>
+
+      <!-- Cuerpo Modal -->
+      <div class="p-5 overflow-y-auto space-y-4 flex-1">
+        <!-- Configuración Client ID -->
+        <div class="bg-[#0d1117] p-4 rounded-xl border border-[#262f3d] space-y-3">
+          <label class="block text-xs font-bold uppercase tracking-wider text-gray-400">
+            Google OAuth 2.0 Client ID (Guardado localmente en tu navegador)
+          </label>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <input id="googleClientIdInput" type="text" placeholder="Ej. 1234567890-abcdefg.apps.googleusercontent.com" class="flex-1 bg-[#161b22] border border-[#2d3748] rounded-xl px-3.5 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-[#00d2ff]" />
+            <button id="btnConnectGoogleDrive" class="px-5 py-2.5 rounded-xl bg-[#00d2ff] hover:bg-[#00b8e6] text-[#0d1117] font-extrabold text-sm transition shrink-0 flex items-center justify-center gap-2">
+              <span>Conectar con Google</span>
+            </button>
+          </div>
+          <div id="driveAuthStatusBar" class="hidden flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#262f3d] text-xs">
+            <span class="text-emerald-400 font-bold flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              Conectado a Google Drive (Modo Solo Lectura)
+            </span>
+            <div class="flex items-center gap-3">
+              <button id="btnRefreshDriveFiles" class="text-[#00d2ff] hover:underline font-bold">Actualizar</button>
+              <button id="btnDisconnectDrive" class="text-gray-400 hover:text-[#ff4757]">Desconectar</button>
+            </div>
+          </div>
+          <!-- Banner de errores de Drive -->
+          <div id="driveErrorBanner" class="hidden p-3 rounded-xl bg-[#ff4757]/15 border border-[#ff4757]/50 text-xs text-[#ff4757] font-semibold"></div>
+        </div>
+
+        <!-- Guía Plegable en 3 Pasos -->
+        <details class="bg-[#1f2937]/60 rounded-xl border border-[#2d3748] overflow-hidden">
+          <summary class="px-4 py-3 text-xs sm:text-sm font-bold text-[#00d2ff] cursor-pointer hover:bg-[#1f2937] flex items-center justify-between">
+            <span>📘 Cómo conectar tu Google Drive gratis y dar acceso al grupo</span>
+            <span class="text-gray-400 text-xs">(Clic para desplegar)</span>
+          </summary>
+          <div class="p-4 pt-2 text-xs sm:text-sm text-gray-300 space-y-2.5 border-t border-[#262f3d]">
+            <ol class="list-decimal list-inside space-y-2 text-gray-300">
+              <li>
+                Entra a <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" class="text-[#00d2ff] underline font-semibold">Google Cloud Console</a>, crea un proyecto gratuito (ej. <em>StageTrack</em>) y habilita <strong>Google Drive API</strong>.
+              </li>
+              <li>
+                En <strong>Pantalla de consentimiento de OAuth → Público</strong>, elige tipo <strong>Externo</strong> y en <strong>Usuarios de prueba</strong> agrega tu correo Gmail y los correos de los integrantes de tu grupo que vayan a descargar secuencias.
+              </li>
+              <li>
+                En <strong>Credenciales → ID de cliente de OAuth (Aplicación web)</strong>, agrega en <em>Orígenes de JavaScript autorizados</em> esta URL:
+                <div class="mt-1.5 flex items-center gap-2 bg-[#0d1117] p-2 rounded-lg border border-[#262f3d]">
+                  <code id="currentOriginDisplay" class="text-xs text-emerald-400 font-mono flex-1 truncate"></code>
+                  <button id="btnCopyOrigin" class="px-2.5 py-1 rounded bg-[#1f2937] hover:bg-[#2d3748] text-xs font-bold text-white shrink-0">
+                    Copiar URL
+                  </button>
+                </div>
+              </li>
+            </ol>
+          </div>
+        </details>
+
+        <!-- Navegación y Buscador del Explorador de Google Drive -->
+        <div id="driveFilesSection" class="space-y-2.5">
+          <!-- Pestañas de modo + Buscador -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="grid grid-cols-3 bg-[#0d1117] p-1 rounded-xl border border-[#262f3d]">
+              <button type="button" data-drive-mode="my-drive" class="drive-mode-tab px-3 py-2 rounded-lg text-xs font-extrabold bg-[#1f2937] text-[#00d2ff] transition flex items-center justify-center gap-1.5">
+                <span>📁 Mi Unidad</span>
+              </button>
+              <button type="button" data-drive-mode="shared" class="drive-mode-tab px-3 py-2 rounded-lg text-xs font-extrabold text-gray-400 hover:text-white transition flex items-center justify-center gap-1.5">
+                <span>👥 Compartidos</span>
+              </button>
+              <button type="button" data-drive-mode="all-zips" class="drive-mode-tab px-3 py-2 rounded-lg text-xs font-extrabold text-gray-400 hover:text-white transition flex items-center justify-center gap-1.5">
+                <span>🗜️ Todos los .ZIP</span>
+              </button>
+            </div>
+
+            <div class="relative flex-1 sm:max-w-xs">
+              <input id="driveSearchInput" type="text" placeholder="Buscar carpeta o canción .zip..." class="w-full bg-[#0d1117] border border-[#2d3748] rounded-xl pl-3 pr-8 py-2 text-xs text-white focus:outline-none focus:border-[#00d2ff]" />
+              <button id="btnClearDriveSearch" type="button" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs font-bold">✕</button>
+            </div>
+          </div>
+
+          <!-- Barra de Ruta (Breadcrumbs) + Subir Nivel -->
+          <div class="flex items-center justify-between gap-2 bg-[#0d1117] px-3 py-2 rounded-xl border border-[#262f3d] min-h-[38px]">
+            <div id="driveBreadcrumbs" class="flex items-center flex-wrap gap-1 text-xs min-w-0">
+              <span class="text-[#00d2ff] font-extrabold">Mi Unidad</span>
+            </div>
+            <button id="btnDriveNavigateUp" type="button" class="hidden px-2.5 py-1 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] text-[11px] font-bold text-gray-200 shrink-0 transition">
+              ↑ Subir nivel
+            </button>
+          </div>
+
+          <!-- Listado de Carpetas y Archivos .ZIP -->
+          <div id="driveFilesList" class="space-y-2 max-h-72 overflow-y-auto pr-1">
+            <div class="text-center py-8 text-xs text-gray-500 border border-dashed border-[#262f3d] rounded-xl">
+              Conecta tu cuenta de Google arriba para explorar tus carpetas y archivos <code class="text-gray-400">.zip</code>.
+            </div>
+          </div>
+
+          <!-- Paginación -->
+          <div id="driveLoadMoreWrapper" class="hidden pt-1 text-center">
+            <button id="btnDriveLoadMore" type="button" class="px-4 py-2 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] text-xs font-bold text-[#00d2ff] border border-[#2d3748] transition">
+              Cargar más elementos de Google Drive...
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL GENÉRICO PARA INPUTS / CONFIRMACIONES (SIN ALERT NI PROMPT)     -->
+  <!-- ===================================================================== -->
+  <div id="customDialogModal" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-[#161b22] border border-[#2d3748] rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4">
+      <h3 id="dialogTitle" class="text-base font-extrabold text-white">Título</h3>
+      <p id="dialogMessage" class="text-sm text-gray-300 hidden"></p>
+      <input id="dialogInput" type="text" class="hidden w-full bg-[#0d1117] border border-[#2d3748] rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#00d2ff]" />
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button id="dialogBtnCancel" class="px-4 py-2 rounded-xl bg-[#1f2937] hover:bg-[#2d3748] text-xs font-bold text-gray-300">Cancelar</button>
+        <button id="dialogBtnConfirm" class="px-4 py-2 rounded-xl bg-[#00d2ff] hover:bg-[#00b8e6] text-xs font-extrabold text-[#0d1117]">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- OVERLAY DE CARGA / DESCOMPRESIÓN / DECODIFICACIÓN                     -->
+  <!-- ===================================================================== -->
+  <div id="loadingOverlay" class="fixed inset-0 z-50 hidden bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-[#161b22] border border-[#2d3748] rounded-2xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+      <div class="w-12 h-12 rounded-full border-4 border-[#1f2937] border-t-[#00d2ff] animate-spin mx-auto"></div>
+      <div>
+        <h3 id="loadingTitle" class="text-base font-extrabold text-white">Procesando secuencia...</h3>
+        <p id="loadingSubtitle" class="text-xs text-gray-400 mt-1">Extrayendo pistas y preparando audio multitrack</p>
+      </div>
+      <div class="w-full h-2 bg-[#0d1117] rounded-full overflow-hidden">
+        <div id="loadingProgressBar" class="h-full bg-[#00d2ff] transition-all duration-200" style="width: 35%"></div>
+      </div>
+      <button id="btnCancelLoadingOverlay" type="button" class="mt-2 px-4 py-1.5 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] text-xs font-bold text-gray-300 border border-[#2d3748] transition">
+        Cerrar ventana de carga
+      </button>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- CONTENEDOR DE NOTIFICACIONES TOAST                                    -->
+  <!-- ===================================================================== -->
+  <div id="toastContainer" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
+
+  <!-- ===================================================================== -->
+  <!-- LÓGICA COMPLETA DE LA APLICACIÓN (AUDIO, ZIP, DRIVE, COMPARTIR)       -->
+  <!-- ===================================================================== -->
+  <script>
+    /**
+     * StageTrack Live — Reproductor Multitrack Profesional para Escenario
+     * Arquitectura 100% cliente ($0 servidores):
+     * 1. OfflineStorage (IndexedDB): Guarda canciones (.mp3/.wav blobs + metadatos) y setlists.
+     * 2. PitchTransposer: Cálculo cromático automático de tonalidad al transponer semitonos.
+     * 3. MultitrackEngine (Web Audio API): Motor DSP con Time-Stretching (BPM) y Pitch-Shifting
+     *    (Semitonos) en tiempo real sincronizado por muestra, dejando intacto el tono del CLICK.
+     * 4. ZipProcessor (JSZip): Descomprime .zip en memoria, limpia nombres y extrae BPM/Tonalidad.
+     * 5. DemoSongGenerator (OfflineAudioContext): Sintetiza canción demo de 6 pistas sincronizadas.
+     * 6. GoogleDriveSync (GIS + Drive API v3): Explorador de carpetas, compartidos y descarga .zip.
+     * 7. SetlistSharer: Exportación e importación de setlists mediante URL directa, JSON o texto.
+     */
+
+    // =========================================================================
+    // 1. UTILIDADES DE INTERFAZ Y TRANSPOSITOR CROMÁTICO DE TONALIDAD
+    // =========================================================================
+    function generateId(prefix = 'id') {
+      return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes <= 0) return '0 MB';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let idx = 0;
+      let val = bytes;
+      while (val >= 1024 && idx < units.length - 1) {
+        val /= 1024;
+        idx++;
+      }
+      return `${val.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+    }
+
+    function formatTime(seconds) {
+      if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
+      const totalSec = Math.floor(seconds);
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function formatDriveDate(isoString) {
+      if (!isoString) return '';
+      try {
+        const d = new Date(isoString);
+        return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+      } catch (_) {
+        return '';
+      }
+    }
+
+    function setLoading(visible, title = 'Procesando secuencia...', subtitle = '', progress = 30) {
+      const overlay = document.getElementById('loadingOverlay');
+      if (!overlay) return;
+      if (!visible) {
+        overlay.classList.add('hidden');
+        return;
+      }
+      document.getElementById('loadingTitle').textContent = title;
+      document.getElementById('loadingSubtitle').textContent = subtitle;
+      document.getElementById('loadingProgressBar').style.width = `${Math.max(5, Math.min(100, progress))}%`;
+      overlay.classList.remove('hidden');
+    }
+
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      if (!container) return;
+
+      const styles = {
+        success: 'bg-[#161b22] border-emerald-500/60 text-emerald-300',
+        error: 'bg-[#161b22] border-[#ff4757]/70 text-[#ff4757]',
+        info: 'bg-[#161b22] border-[#00d2ff]/60 text-gray-100'
+      };
+
+      const toast = document.createElement('div');
+      toast.className = `pointer-events-auto px-4 py-3 rounded-xl border shadow-2xl text-xs sm:text-sm font-semibold flex items-center justify-between gap-3 transition-all duration-200 ${styles[type] || styles.info}`;
+      toast.innerHTML = `<span>${message}</span>`;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(8px)';
+        setTimeout(() => toast.remove(), 220);
+      }, 4200);
+    }
+
+    function openCustomDialog({ title, message = '', defaultValue = null, confirmText = 'Aceptar', isDanger = false }) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('customDialogModal');
+        const titleEl = document.getElementById('dialogTitle');
+        const msgEl = document.getElementById('dialogMessage');
+        const inputEl = document.getElementById('dialogInput');
+        const btnCancel = document.getElementById('dialogBtnCancel');
+        const btnConfirm = document.getElementById('dialogBtnConfirm');
+
+        titleEl.textContent = title;
+
+        if (message) {
+          msgEl.textContent = message;
+          msgEl.classList.remove('hidden');
+        } else {
+          msgEl.classList.add('hidden');
+        }
+
+        const isInputMode = defaultValue !== null;
+        if (isInputMode) {
+          inputEl.value = defaultValue;
+          inputEl.classList.remove('hidden');
+        } else {
+          inputEl.classList.add('hidden');
+        }
+
+        btnConfirm.textContent = confirmText;
+        btnConfirm.className = isDanger
+          ? 'px-4 py-2 rounded-xl bg-[#ff4757] hover:bg-red-600 text-xs font-extrabold text-white'
+          : 'px-4 py-2 rounded-xl bg-[#00d2ff] hover:bg-[#00b8e6] text-xs font-extrabold text-[#0d1117]';
+
+        modal.classList.remove('hidden');
+        if (isInputMode) {
+          setTimeout(() => {
+            inputEl.focus();
+            inputEl.select();
+          }, 30);
+        }
+
+        const cleanup = (result) => {
+          modal.classList.add('hidden');
+          btnCancel.removeEventListener('click', onCancel);
+          btnConfirm.removeEventListener('click', onConfirm);
+          inputEl.removeEventListener('keydown', onKeyDown);
+          resolve(result);
+        };
+
+        const onCancel = () => cleanup(isInputMode ? null : false);
+        const onConfirm = () => cleanup(isInputMode ? inputEl.value.trim() : true);
+        const onKeyDown = (e) => {
+          if (e.key === 'Enter') onConfirm();
+          if (e.key === 'Escape') onCancel();
+        };
+
+        btnCancel.addEventListener('click', onCancel);
+        btnConfirm.addEventListener('click', onConfirm);
+        inputEl.addEventListener('keydown', onKeyDown);
+      });
+    }
+
+    class PitchTransposer {
+      static transposeKeyLabel(keyLabel, semitones) {
+        if (!keyLabel || keyLabel === '—' || !semitones) return keyLabel || '—';
+        const match = String(keyLabel).trim().match(/^([A-G][#b]?)(.*)$/i);
+        if (!match) return keyLabel;
+
+        const noteMap = {
+          C: 0, 'B#': 0,
+          'C#': 1, DB: 1,
+          D: 2,
+          'D#': 3, EB: 3,
+          E: 4, FB: 4,
+          F: 5, 'E#': 5,
+          'F#': 6, GB: 6,
+          G: 7,
+          'G#': 8, AB: 8,
+          A: 9,
+          'A#': 10, BB: 10,
+          B: 11, CB: 11
+        };
+        const scaleNames = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+        const rawRoot = match[1].toUpperCase();
+        const suffix = match[2] || '';
+        const baseIndex = noteMap[rawRoot];
+        if (typeof baseIndex !== 'number') return keyLabel;
+
+        const targetIndex = (((baseIndex + semitones) % 12) + 12) % 12;
+        return `${scaleNames[targetIndex]}${suffix}`;
+      }
+    }
+
+    // =========================================================================
+    // 2. ALMACENAMIENTO OFFLINE PERSISTENTE EN EL DISPOSITIVO (INDEXEDDB)
+    // =========================================================================
+    class OfflineStorage {
+      constructor(dbName = 'StageTrackLiveDB', version = 1) {
+        this.dbName = dbName;
+        this.version = version;
+        this.db = null;
+      }
+
+      init() {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open(this.dbName, this.version);
+
+          request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains('songs')) {
+              db.createObjectStore('songs', { keyPath: 'id' });
+            }
+            if (!db.objectStoreNames.contains('setlists')) {
+              db.createObjectStore('setlists', { keyPath: 'id' });
+            }
+          };
+
+          request.onsuccess = (event) => {
+            this.db = event.target.result;
+            resolve(this.db);
+          };
+
+          request.onerror = (event) => {
+            reject(event.target.error || new Error('No se pudo abrir IndexedDB'));
+          };
+        });
+      }
+
+      saveSong(songRecord) {
+        return new Promise((resolve, reject) => {
+          const tx = this.db.transaction(['songs'], 'readwrite');
+          tx.objectStore('songs').put(songRecord);
+          tx.oncomplete = () => resolve(songRecord);
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+
+      getSong(id) {
+        return new Promise((resolve, reject) => {
+          const tx = this.db.transaction(['songs'], 'readonly');
+          const req = tx.objectStore('songs').get(id);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+        });
+      }
+
+      getAllSongsMeta() {
+        return new Promise((resolve, reject) => {
+          const tx = this.db.transaction(['songs'], 'readonly');
+          const req = tx.objectStore('songs').getAll();
+          req.onsuccess = () => {
+            const all = req.result || [];
+            const metaList = all
+              .map(s => ({
+                id: s.id,
+                title: s.title,
+                zipFilename: s.zipFilename,
+                key: PitchTransposer.transposeKeyLabel(s.key || '—', s.pitchSemitones || 0),
+                bpm: s.customBpm || s.bpm || 120,
+                duration: s.duration || 0,
+                sizeBytes: s.sizeBytes || 0,
+                trackCount: Array.isArray(s.tracks) ? s.tracks.length : 0,
+                driveFileId: s.driveFileId || null,
+                createdAt: s.createdAt || 0
+              }))
+              .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+            resolve(metaList);
+          };
+          req.onerror = () => reject(req.error);
+        });
+      }
+
+      deleteSong(id) {
+        return new Promise((resolve, reject) => {
+          const tx = this.db.transaction(['songs'], 'readwrite');
+          tx.objectStore('songs').delete(id);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+
+      saveSetlist(setlist) {
+        return new Promise((resolve, reject) => {
+          const tx = this.db.transaction(['setlists'], 'readwrite');
+          tx.objectStore('setlists').put(setlist);
+          tx.oncomplete = () => resolve(setlist);
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+
+      getAllSetlists() {
+        return new Promise((resolve, reject) => {
+          const tx = this.db.transaction(['setlists'], 'readonly');
+          const req = tx.objectStore('setlists').getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+        });
+      }
+
+      deleteSetlist(id) {
+        return new Promise((resolve, reject) => {
+          const tx = this.db.transaction(['setlists'], 'readwrite');
+          tx.objectStore('setlists').delete(id);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+    }
+
+    // =========================================================================
+    // 3. MOTOR MULTITRACK HÍBRIDO (AUDIO NATIVO + SIGNALSMITH WASM + WSOLA)
+    // =========================================================================
+    class MultitrackEngine {
+      constructor() {
+        this.ctx = null;
+        this.masterGain = null;
+        this.masterAnalyser = null;
+        this.masterTimeData = null;
+
+        this.currentSong = null;
+        this.isPlaying = false;
+        this.isLooping = false;
+        this.splitLiveMode = false;
+
+        this.playheadSeconds = 0;
+        this.playStartCtxTime = 0;
+        this.playStartOffsetSec = 0;
+        this.masterVolume = 1.0;
+        this.waveformPeaks = [];
+
+        this.originalBpm = 120;
+        this.currentBpm = 120;
+        this.pitchSemitones = 0;
+
+        // Estado del procesador DSP cuando BPM o Semitonos cambian
+        this.activeEngineMode = 'native'; // 'native' | 'wasm' | 'wsola'
+        this.wasmReady = false;
+        this.wasmFailed = false;
+        this.wasmInitPromise = null;
+      }
+
+      _withTimeout(promise, ms, label = 'Operación DSP') {
+        return Promise.race([
+          promise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`${label} excedió ${ms}ms`)), ms)
+          )
+        ]);
+      }
+
+      async ensureContext() {
+        if (!this.ctx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioCtx();
+
+          this.masterGain = this.ctx.createGain();
+          this.masterGain.gain.value = this.masterVolume;
+
+          this.masterAnalyser = this.ctx.createAnalyser();
+          this.masterAnalyser.fftSize = 256;
+          this.masterTimeData = new Uint8Array(this.masterAnalyser.frequencyBinCount);
+
+          this.masterGain.connect(this.masterAnalyser);
+          this.masterAnalyser.connect(this.ctx.destination);
+        }
+        // Nunca bloquear con await si Chrome mantiene el AudioContext suspendido antes de un clic
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+      }
+
+      isTimeOrPitchModified() {
+        return this.currentBpm !== this.originalBpm || this.pitchSemitones !== 0;
+      }
+
+      getTempoRatio() {
+        if (!this.originalBpm || this.originalBpm <= 0) return 1.0;
+        return Math.max(0.4, Math.min(2.5, this.currentBpm / this.originalBpm));
+      }
+
+      getPitchRatio() {
+        if (!this.pitchSemitones) return 1.0;
+        return Math.pow(2, this.pitchSemitones / 12);
+      }
+
+      _stopActiveSources() {
+        if (!this.currentSong || !this.currentSong.tracks) return;
+        this.currentSong.tracks.forEach((track) => {
+          if (track.nativeSource) {
+            try {
+              track.nativeSource.stop();
+              track.nativeSource.disconnect();
+            } catch (_) {}
+            track.nativeSource = null;
+          }
+          if (track.stretchNode) {
+            try {
+              track.stretchNode.schedule({ output: this.ctx ? this.ctx.currentTime : 0, active: false });
+            } catch (_) {}
+          }
+          if (track.wsolaNode) {
+            try {
+              track.wsolaNode.disconnect();
+            } catch (_) {}
+            track.wsolaNode = null;
+          }
+        });
+      }
+
+      _teardownCurrentNodes() {
+        this._stopActiveSources();
+        if (!this.currentSong || !this.currentSong.tracks) return;
+        this.currentSong.tracks.forEach((track) => {
+          try {
+            if (track.stretchNode) {
+              track.stretchNode.stop();
+              track.stretchNode.disconnect();
+            }
+            if (track.gainNode) track.gainNode.disconnect();
+            if (track.panNode) track.panNode.disconnect();
+            if (track.analyserNode) track.analyserNode.disconnect();
+          } catch (_) {}
+          track.stretchNode = null;
+          track.nativeSource = null;
+          track.wsolaNode = null;
+        });
+      }
+
+      async loadSong(songRecord, onProgress = () => {}) {
+        this.stop();
+        this._teardownCurrentNodes();
+        await this.ensureContext();
+
+        const decodedTracks = [];
+        let maxDuration = 0;
+        const total = songRecord.tracks.length;
+
+        this.originalBpm = songRecord.bpm || 120;
+        this.currentBpm = songRecord.customBpm || this.originalBpm;
+        this.pitchSemitones = typeof songRecord.pitchSemitones === 'number' ? songRecord.pitchSemitones : 0;
+
+        this.wasmReady = false;
+        this.wasmFailed = false;
+        this.wasmInitPromise = null;
+        this.activeEngineMode = 'native';
+
+        for (let i = 0; i < total; i++) {
+          const t = songRecord.tracks[i];
+          const pct = Math.round(((i + 0.5) / total) * 90);
+          onProgress(`Decodificando ${t.name} (${i + 1}/${total})...`, pct);
+          // Ceder un frame al navegador para que la interfaz no se congele
+          await new Promise(r => setTimeout(r, 0));
+
+          const arrayBuffer = await this._withTimeout(
+            t.blob.arrayBuffer(),
+            8000,
+            `Lectura de ${t.name}`
+          );
+          const audioBuffer = await this._withTimeout(
+            this.ctx.decodeAudioData(arrayBuffer),
+            15000,
+            `Decodificación de ${t.name}`
+          );
+          if (audioBuffer.duration > maxDuration) {
+            maxDuration = audioBuffer.duration;
+          }
+
+          const ch0 = audioBuffer.getChannelData(0);
+          const ch1 = audioBuffer.numberOfChannels > 1
+            ? audioBuffer.getChannelData(1)
+            : new Float32Array(ch0);
+
+          const gainNode = this.ctx.createGain();
+          const panNode = this.ctx.createStereoPanner();
+          const analyserNode = this.ctx.createAnalyser();
+          analyserNode.fftSize = 128;
+
+          gainNode.connect(panNode);
+          panNode.connect(analyserNode);
+          analyserNode.connect(this.masterGain);
+
+          decodedTracks.push({
+            id: t.id || generateId('trk'),
+            name: t.name,
+            isClick: Boolean(t.isClick),
+            volume: t.volume ?? 1.0,
+            pan: t.pan ?? 0.0,
+            muted: Boolean(t.muted),
+            solo: false,
+            buffer: audioBuffer,
+            ch0,
+            ch1,
+            gainNode,
+            panNode,
+            analyserNode,
+            analyserData: new Uint8Array(analyserNode.frequencyBinCount),
+            nativeSource: null,
+            stretchNode: null,
+            wsolaNode: null
+          });
+        }
+
+        const baseKey = songRecord.key || '—';
+        this.currentSong = {
+          id: songRecord.id,
+          title: songRecord.title,
+          baseKey,
+          key: PitchTransposer.transposeKeyLabel(baseKey, this.pitchSemitones),
+          originalBpm: this.originalBpm,
+          bpm: this.currentBpm,
+          pitchSemitones: this.pitchSemitones,
+          duration: maxDuration || songRecord.duration || 0,
+          tracks: decodedTracks
+        };
+
+        this.playheadSeconds = 0;
+        this.playStartOffsetSec = 0;
+        this._computeWaveformPeaks(220);
+
+        if (this.splitLiveMode) {
+          this.applySplitRouting(true);
+        } else {
+          this._syncRoutingNodes();
+        }
+
+        onProgress('Listo', 100);
+      }
+
+      /**
+       * Inicializa bajo demanda los nodos C++/WASM SignalsmithStretch (solo cuando
+       * el usuario modifica BPM o Tono y el AudioContext ya está corriendo).
+       */
+      async _ensureWasmStretchReady() {
+        if (this.wasmReady) return true;
+        if (this.wasmFailed || typeof window.SignalsmithStretch !== 'function' || !this.currentSong) {
+          return false;
+        }
+        if (this.wasmInitPromise) {
+          return this.wasmInitPromise;
+        }
+
+        this.wasmInitPromise = (async () => {
+          try {
+            await this.ensureContext();
+            const songRef = this.currentSong;
+
+            for (const track of songRef.tracks) {
+              if (this.currentSong !== songRef) return false;
+              // Llamada oficial sin numberOfInputs para operar en modo buffer (no live-input)
+              const node = await this._withTimeout(
+                window.SignalsmithStretch(this.ctx),
+                2500,
+                'SignalsmithStretch init'
+              );
+              try {
+                node.configure({ blockMs: 110, intervalMs: 25, splitComputation: true });
+              } catch (_) {}
+
+              // Enviar copias limpias para evitar transferencia de memoria compartida
+              const leftCopy = new Float32Array(track.ch0);
+              const rightCopy = new Float32Array(track.ch1);
+              await this._withTimeout(
+                node.addBuffers([leftCopy, rightCopy]),
+                3000,
+                `addBuffers ${track.name}`
+              );
+              node.connect(track.gainNode);
+              track.stretchNode = node;
+            }
+
+            if (this.currentSong === songRef) {
+              this.wasmReady = true;
+              return true;
+            }
+            return false;
+          } catch (err) {
+            console.warn('Signalsmith WASM no disponible, usando motor WSOLA Studio:', err);
+            this.wasmFailed = true;
+            if (this.currentSong) {
+              this.currentSong.tracks.forEach((t) => {
+                if (t.stretchNode) {
+                  try { t.stretchNode.disconnect(); } catch (_) {}
+                  t.stretchNode = null;
+                }
+              });
+            }
+            return false;
+          } finally {
+            this.wasmInitPromise = null;
+          }
+        })();
+
+        return this.wasmInitPromise;
+      }
+
+      /**
+       * Respaldo DSP WSOLA (Waveform Similarity Overlap-Add) con alineación por
+       * correlación cruzada de forma de onda para evitar cualquier efecto metálico.
+       */
+      _createWsolaTrackNode(track, offsetSec) {
+        const sr = this.ctx.sampleRate;
+        const bufLen = track.ch0.length;
+        const tempoRatio = this.getTempoRatio();
+        const pitchRatio = track.isClick ? 1.0 : this.getPitchRatio();
+        // Paso de lectura en buffer original por cada muestra de salida
+        const readStep = pitchRatio;
+        // Compensación de tempo mediante saltos WSOLA sincronizados por correlación
+        const windowSize = Math.round(sr * 0.064); // 64ms ventana Hanning
+        const halfWin = windowSize >> 1;
+        const searchTol = Math.round(sr * 0.012);  // ±12ms búsqueda de fase óptima
+        const synthesisHop = halfWin;
+        const analysisHop = Math.max(1, Math.round(synthesisHop * (tempoRatio / pitchRatio)));
+
+        // Precalcular ventana Hann
+        const hann = new Float32Array(windowSize);
+        for (let i = 0; i < windowSize; i++) {
+          hann[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (windowSize - 1)));
+        }
+
+        const outRingL = new Float32Array(windowSize * 4);
+        const outRingR = new Float32Array(windowSize * 4);
+        const ringMask = outRingL.length - 1;
+
+        let analysisPos = Math.max(0, Math.min(bufLen - windowSize - searchTol - 2, offsetSec * sr));
+        let ringWritePtr = 0;
+        let ringReadPtr = 0;
+        let samplesQueued = 0;
+        const isLoop = this.isLooping;
+
+        const readCubic = (arr, pos) => {
+          const i0 = Math.floor(pos);
+          if (i0 < 0 || i0 >= bufLen - 1) return 0;
+          const frac = pos - i0;
+          const xm1 = arr[Math.max(0, i0 - 1)];
+          const x0 = arr[i0];
+          const x1 = arr[Math.min(bufLen - 1, i0 + 1)];
+          const x2 = arr[Math.min(bufLen - 1, i0 + 2)];
+          const c = (x1 - xm1) * 0.5;
+          const v = x0 - x1;
+          const w = c + v;
+          const a = w + v + (x2 - x0) * 0.5;
+          const bNeg = w + a;
+          return (((a * frac) - bNeg) * frac + c) * frac + x0;
+        };
+
+        const synthesizeGrain = () => {
+          if (analysisPos + windowSize * readStep + searchTol >= bufLen) {
+            if (isLoop && bufLen > windowSize * 2) {
+              analysisPos = 0;
+            } else {
+              // Rellenar silencio al terminar la pista
+              for (let i = 0; i < synthesisHop; i++) {
+                ringWritePtr = (ringWritePtr + 1) & ringMask;
+                samplesQueued++;
+              }
+              return;
+            }
+          }
+
+          // Buscar desplazamiento óptimo (-searchTol .. +searchTol) que maximice similitud con la cola previa
+          let bestOffset = 0;
+          if (samplesQueued >= halfWin) {
+            let bestCorr = -Infinity;
+            const stepSearch = 4;
+            for (let delta = -searchTol; delta <= searchTol; delta += stepSearch) {
+              let corr = 0;
+              for (let k = 0; k < halfWin; k += 8) {
+                const existing = outRingL[(ringWritePtr + k) & ringMask];
+                const cand = readCubic(track.ch0, analysisPos + delta + k * readStep);
+                corr += existing * cand;
+              }
+              if (corr > bestCorr) {
+                bestCorr = corr;
+                bestOffset = delta;
+              }
+            }
+          }
+
+          const grainStart = Math.max(0, analysisPos + bestOffset);
+          for (let i = 0; i < windowSize; i++) {
+            const idx = (ringWritePtr + i) & ringMask;
+            const w = hann[i];
+            const pos = grainStart + i * readStep;
+            outRingL[idx] += readCubic(track.ch0, pos) * w;
+            outRingR[idx] += readCubic(track.ch1, pos) * w;
+          }
+
+          ringWritePtr = (ringWritePtr + synthesisHop) & ringMask;
+          samplesQueued += synthesisHop;
+          analysisPos += analysisHop;
+        };
+
+        const node = this.ctx.createScriptProcessor(2048, 0, 2);
+        node.onaudioprocess = (ev) => {
+          const outL = ev.outputBuffer.getChannelData(0);
+          const outR = ev.outputBuffer.getChannelData(1);
+          const n = outL.length;
+
+          while (samplesQueued < n + halfWin) {
+            synthesizeGrain();
+          }
+
+          for (let i = 0; i < n; i++) {
+            const rIdx = ringReadPtr & ringMask;
+            outL[i] = outRingL[rIdx];
+            outR[i] = outRingR[rIdx];
+            outRingL[rIdx] = 0;
+            outRingR[rIdx] = 0;
+            ringReadPtr++;
+            samplesQueued--;
+          }
+        };
+
+        node.connect(track.gainNode);
+        return node;
+      }
+
+      _syncRoutingNodes() {
+        if (!this.currentSong || !this.ctx) return;
+        const anySolo = this.currentSong.tracks.some(t => t.solo);
+        const now = this.ctx.currentTime;
+
+        this.currentSong.tracks.forEach((track) => {
+          const isActive = anySolo ? track.solo : !track.muted;
+          const targetGain = isActive ? track.volume : 0;
+          if (track.gainNode) {
+            track.gainNode.gain.setTargetAtTime(targetGain, now, 0.012);
+          }
+          if (track.panNode) {
+            track.panNode.pan.setTargetAtTime(track.pan || 0, now, 0.012);
+          }
+        });
+      }
+
+      async _scheduleAllTracks(offsetSec, shouldPlay) {
+        if (!this.currentSong || !this.ctx) return;
+        const safeOffset = Math.max(0, Math.min(offsetSec, Math.max(0, this.currentSong.duration - 0.01)));
+        const tempoRatio = this.getTempoRatio();
+        const duration = this.currentSong.duration;
+
+        this._stopActiveSources();
+        this._syncRoutingNodes();
+
+        if (!shouldPlay) {
+          this.playStartOffsetSec = safeOffset;
+          return;
+        }
+
+        const modified = this.isTimeOrPitchModified();
+
+        // 1) Si NO se modificó BPM ni Tono -> Reproducción nativa bit-perfect ultrarrápida
+        if (!modified) {
+          this.activeEngineMode = 'native';
+          const startAt = this.ctx.currentTime + 0.025;
+          this.playStartCtxTime = startAt;
+          this.playStartOffsetSec = safeOffset;
+
+          this.currentSong.tracks.forEach((track) => {
+            if (!track.buffer) return;
+            const src = this.ctx.createBufferSource();
+            src.buffer = track.buffer;
+            src.loop = this.isLooping;
+            if (this.isLooping) {
+              src.loopStart = 0;
+              src.loopEnd = duration;
+            }
+            src.connect(track.gainNode);
+            src.start(startAt, safeOffset);
+            track.nativeSource = src;
+          });
+          return;
+        }
+
+        // 2) Si se modificó BPM o Tono -> Usar SignalsmithStretch WASM (con preservación de formantes)
+        const hasWasm = await this._ensureWasmStretchReady();
+        if (hasWasm && this.currentSong && this.currentSong.tracks.every(t => t.stretchNode)) {
+          this.activeEngineMode = 'wasm';
+          const syncOutputTime = this.ctx.currentTime + 0.04;
+          this.playStartCtxTime = syncOutputTime;
+          this.playStartOffsetSec = safeOffset;
+
+          this.currentSong.tracks.forEach((track) => {
+            const trackSemitones = track.isClick ? 0 : this.pitchSemitones;
+            track.stretchNode.schedule({
+              output: syncOutputTime,
+              active: true,
+              input: safeOffset,
+              rate: tempoRatio,
+              semitones: trackSemitones,
+              formantCompensation: !track.isClick && trackSemitones !== 0,
+              tonalityHz: 8000,
+              loopStart: 0,
+              loopEnd: this.isLooping ? duration : 0
+            });
+          });
+          return;
+        }
+
+        // 3) Respaldo WSOLA Studio (correlación cruzada de forma de onda sin efecto robótico)
+        this.activeEngineMode = 'wsola';
+        const startAt = this.ctx.currentTime + 0.02;
+        this.playStartCtxTime = startAt;
+        this.playStartOffsetSec = safeOffset;
+
+        this.currentSong.tracks.forEach((track) => {
+          track.wsolaNode = this._createWsolaTrackNode(track, safeOffset);
+        });
+      }
+
+      _computeWaveformPeaks(bins = 220) {
+        if (!this.currentSong || this.currentSong.tracks.length === 0) {
+          this.waveformPeaks = [];
+          return;
+        }
+        const peaks = new Float32Array(bins);
+        const musicalTracks = this.currentSong.tracks.filter(t => !t.isClick);
+        const sourceTracks = musicalTracks.length > 0 ? musicalTracks : this.currentSong.tracks;
+
+        sourceTracks.forEach((track) => {
+          const data = track.ch0;
+          const blockSize = Math.max(1, Math.floor(data.length / bins));
+          for (let i = 0; i < bins; i++) {
+            const start = i * blockSize;
+            let maxVal = 0;
+            const step = Math.max(1, Math.floor(blockSize / 24));
+            for (let j = 0; j < blockSize && start + j < data.length; j += step) {
+              const abs = Math.abs(data[start + j]);
+              if (abs > maxVal) maxVal = abs;
+            }
+            if (maxVal > peaks[i]) peaks[i] = maxVal;
+          }
+        });
+
+        this.waveformPeaks = Array.from(peaks);
+      }
+
+      async play() {
+        if (!this.currentSong || this.isPlaying) return;
+        await this.ensureContext();
+        this.isPlaying = true;
+        await this._scheduleAllTracks(this.playheadSeconds, true);
+      }
+
+      pause() {
+        if (!this.isPlaying) return;
+        this.playheadSeconds = this.getCurrentTime();
+        this.isPlaying = false;
+        this._stopActiveSources();
+      }
+
+      stop() {
+        this.isPlaying = false;
+        this.playheadSeconds = 0;
+        this.playStartOffsetSec = 0;
+        this._stopActiveSources();
+      }
+
+      async seekTo(seconds) {
+        if (!this.currentSong) return;
+        const clamped = Math.max(0, Math.min(seconds, this.currentSong.duration));
+        this.playheadSeconds = clamped;
+        this.playStartOffsetSec = clamped;
+        if (this.isPlaying) {
+          await this._scheduleAllTracks(clamped, true);
+        }
+      }
+
+      getCurrentTime() {
+        if (!this.currentSong) return 0;
+        if (!this.isPlaying || !this.ctx) return this.playheadSeconds;
+
+        if (this.activeEngineMode === 'wasm') {
+          const leadTrack = this.currentSong.tracks[0];
+          if (leadTrack && leadTrack.stretchNode && typeof leadTrack.stretchNode.inputTime === 'number') {
+            const wasmPos = leadTrack.stretchNode.inputTime;
+            if (Number.isFinite(wasmPos) && wasmPos >= 0) {
+              this.playheadSeconds = Math.min(this.currentSong.duration, wasmPos);
+              return this.playheadSeconds;
+            }
+          }
+        }
+
+        const elapsedCtx = Math.max(0, this.ctx.currentTime - this.playStartCtxTime);
+        const pos = this.playStartOffsetSec + elapsedCtx * this.getTempoRatio();
+        if (this.isLooping && this.currentSong.duration > 0) {
+          this.playheadSeconds = pos % this.currentSong.duration;
+        } else {
+          this.playheadSeconds = Math.min(this.currentSong.duration, pos);
+        }
+        return this.playheadSeconds;
+      }
+
+      async setLooping(loopEnabled) {
+        this.isLooping = Boolean(loopEnabled);
+        if (this.isPlaying && this.currentSong) {
+          const cur = this.getCurrentTime();
+          await this._scheduleAllTracks(cur, true);
+        }
+      }
+
+      async setLiveBpm(newBpm) {
+        if (!this.currentSong) return;
+        const cur = this.getCurrentTime();
+        const clamped = Math.max(40, Math.min(280, Math.round(newBpm)));
+        this.currentBpm = clamped;
+        this.currentSong.bpm = clamped;
+        this.playheadSeconds = cur;
+        if (this.isPlaying) {
+          await this._scheduleAllTracks(cur, true);
+        }
+      }
+
+      async setPitchSemitones(newSemitones) {
+        if (!this.currentSong) return;
+        const cur = this.getCurrentTime();
+        const clamped = Math.max(-12, Math.min(12, Math.round(newSemitones)));
+        this.pitchSemitones = clamped;
+        this.currentSong.pitchSemitones = clamped;
+        this.currentSong.key = PitchTransposer.transposeKeyLabel(this.currentSong.baseKey, clamped);
+        this.playheadSeconds = cur;
+        if (this.isPlaying) {
+          await this._scheduleAllTracks(cur, true);
+        }
+      }
+
+      setMasterVolume(val) {
+        this.masterVolume = val;
+        if (this.masterGain && this.ctx) {
+          this.masterGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.015);
+        }
+      }
+
+      setTrackVolume(trackId, val) {
+        if (!this.currentSong) return;
+        const track = this.currentSong.tracks.find(t => t.id === trackId);
+        if (track) {
+          track.volume = val;
+          this._syncRoutingNodes();
+        }
+      }
+
+      setTrackPan(trackId, pan) {
+        if (!this.currentSong) return;
+        const track = this.currentSong.tracks.find(t => t.id === trackId);
+        if (track) {
+          track.pan = Math.max(-1, Math.min(1, pan));
+          this._syncRoutingNodes();
+        }
+      }
+
+      toggleMute(trackId) {
+        if (!this.currentSong) return;
+        const track = this.currentSong.tracks.find(t => t.id === trackId);
+        if (track) {
+          track.muted = !track.muted;
+          this._syncRoutingNodes();
+        }
+      }
+
+      toggleSolo(trackId) {
+        if (!this.currentSong) return;
+        const track = this.currentSong.tracks.find(t => t.id === trackId);
+        if (track) {
+          track.solo = !track.solo;
+          this._syncRoutingNodes();
+        }
+      }
+
+      unmuteAll() {
+        if (!this.currentSong) return;
+        this.currentSong.tracks.forEach(t => { t.muted = false; });
+        this._syncRoutingNodes();
+      }
+
+      clearSolo() {
+        if (!this.currentSong) return;
+        this.currentSong.tracks.forEach(t => { t.solo = false; });
+        this._syncRoutingNodes();
+      }
+
+      applySplitRouting(enableSplit) {
+        this.splitLiveMode = enableSplit;
+        if (!this.currentSong) return;
+        this.currentSong.tracks.forEach((track) => {
+          track.pan = enableSplit ? (track.isClick ? -1.0 : 1.0) : 0.0;
+        });
+        this._syncRoutingNodes();
+      }
+
+      getMeterLevels() {
+        if (!this.isPlaying || !this.currentSong || !this.masterAnalyser) {
+          return { master: 0, tracks: {} };
+        }
+
+        this.masterAnalyser.getByteTimeDomainData(this.masterTimeData);
+        let masterPeak = 0;
+        for (let i = 0; i < this.masterTimeData.length; i++) {
+          const v = Math.abs(this.masterTimeData[i] - 128) / 128;
+          if (v > masterPeak) masterPeak = v;
+        }
+
+        const trackLevels = {};
+        this.currentSong.tracks.forEach((track) => {
+          if (!track.analyserNode || !track.analyserData) {
+            trackLevels[track.id] = 0;
+            return;
+          }
+          track.analyserNode.getByteTimeDomainData(track.analyserData);
+          let tPeak = 0;
+          for (let i = 0; i < track.analyserData.length; i++) {
+            const v = Math.abs(track.analyserData[i] - 128) / 128;
+            if (v > tPeak) tPeak = v;
+          }
+          trackLevels[track.id] = Math.min(100, Math.round(tPeak * 150));
+        });
+
+        return {
+          master: Math.min(100, Math.round(masterPeak * 150)),
+          tracks: trackLevels
+        };
+      }
+    }
+
+    // =========================================================================
+    // 4. PROCESADOR DE ARCHIVOS .ZIP Y DETECTOR DE METADATOS
+    // =========================================================================
+    class ZipProcessor {
+      static parseZipFilename(filename) {
+        const base = String(filename || 'Secuencia')
+          .replace(/\.zip$/i, '')
+          .replace(/_/g, ' ')
+          .trim();
+
+        let bpm = 120;
+        const bpmMatch = base.match(/(\d{2,3})\s*bpm/i);
+        if (bpmMatch) {
+          const parsedBpm = parseInt(bpmMatch[1], 10);
+          if (parsedBpm >= 40 && parsedBpm <= 280) bpm = parsedBpm;
+        }
+
+        let key = '—';
+        const parts = base.split(/[-–|]+/).map(p => p.trim()).filter(Boolean);
+        for (let i = 1; i < parts.length; i++) {
+          const part = parts[i];
+          if (/bpm/i.test(part) || /hz/i.test(part)) continue;
+          const keyMatch = part.match(/^([A-G][#b]?)\s*(maj|major|mayor|min|minor|menor|m)?$/i);
+          if (keyMatch) {
+            const root = keyMatch[1].charAt(0).toUpperCase() + (keyMatch[1].slice(1) || '');
+            const qual = (keyMatch[2] || '').toLowerCase();
+            if (qual.startsWith('min') || qual === 'men' || qual === 'menor' || qual === 'm') {
+              key = `${root} minor`;
+            } else {
+              key = root;
+            }
+            break;
+          }
+        }
+
+        const title = (parts[0] || base).trim() || 'Secuencia Sin Título';
+        return { title, key, bpm };
+      }
+
+      static cleanTrackName(rawPath) {
+        const filename = rawPath.split('/').pop() || rawPath;
+        return filename
+          .replace(/\.(mp3|wav|ogg|m4a|aac|flac)$/i, '')
+          .replace(/^\d+[\s._-]+/, '')
+          .replace(/[_-]+/g, ' ')
+          .trim()
+          .toUpperCase() || 'PISTA';
+      }
+
+      static isClickTrack(cleanName) {
+        return /\b(CLICK|METRONOMO|METRONOME|GUIA|CUE|COUNT)\b/i.test(cleanName);
+      }
+
+      static async processZipBlob(zipBlob, zipFilename, onProgress = () => {}) {
+        if (typeof window.JSZip === 'undefined') {
+          throw new Error('La librería JSZip no está disponible.');
+        }
+
+        onProgress('Abriendo paquete .ZIP...', 15);
+        const zip = await window.JSZip.loadAsync(zipBlob);
+        const validAudioRegex = /\.(mp3|wav|ogg|m4a|aac|flac)$/i;
+
+        const entries = Object.values(zip.files)
+          .filter(entry => {
+            if (entry.dir) return false;
+            if (entry.name.includes('__MACOSX')) return false;
+            const base = entry.name.split('/').pop() || '';
+            if (base.startsWith('.')) return false;
+            return validAudioRegex.test(base);
+          })
+          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+        if (entries.length === 0) {
+          throw new Error('El archivo .ZIP no contiene pistas de audio MP3 o WAV válidas.');
+        }
+
+        const meta = this.parseZipFilename(zipFilename);
+        const tracks = [];
+        let totalBytes = 0;
+
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          const cleanName = this.cleanTrackName(entry.name);
+          const pct = 20 + Math.round(((i + 1) / entries.length) * 70);
+          onProgress(`Extrayendo pista: ${cleanName} (${i + 1}/${entries.length})...`, pct);
+
+          const rawBlob = await entry.async('blob');
+          const mimeType = /\.wav$/i.test(entry.name) ? 'audio/wav' : 'audio/mpeg';
+          const audioBlob = new Blob([rawBlob], { type: mimeType });
+          totalBytes += audioBlob.size;
+
+          tracks.push({
+            id: generateId('trk'),
+            name: cleanName,
+            isClick: this.isClickTrack(cleanName),
+            volume: 1.0,
+            pan: 0.0,
+            muted: false,
+            blob: audioBlob
+          });
+        }
+
+        onProgress('Guardando secuencia offline...', 95);
+        return {
+          id: generateId('song'),
+          title: meta.title,
+          zipFilename,
+          key: meta.key,
+          bpm: meta.bpm,
+          customBpm: meta.bpm,
+          pitchSemitones: 0,
+          duration: 0,
+          sizeBytes: totalBytes,
+          createdAt: Date.now(),
+          tracks
+        };
+      }
+    }
+
+    // =========================================================================
+    // 5. GENERADOR DE CANCIÓN DEMO MULTITRACK (6 PISTAS SINCRONIZADAS)
+    // =========================================================================
+    class DemoSongGenerator {
+      static async generateDemoSong(onProgress = () => {}) {
+        const sampleRate = 44100;
+        const bpm = 120;
+        const beatSec = 60 / bpm;
+        const bars = 8;
+        const totalBeats = bars * 4;
+        const duration = totalBeats * beatSec;
+        const lengthSamples = sampleRate * duration;
+
+        const trackSpecs = [
+          { name: 'CLICK', isClick: true },
+          { name: 'BATERIA', isClick: false },
+          { name: 'BAJO', isClick: false },
+          { name: 'GUITARRA', isClick: false },
+          { name: 'PIANO', isClick: false },
+          { name: 'PERCUSION', isClick: false }
+        ];
+
+        const tracks = [];
+        for (let idx = 0; idx < trackSpecs.length; idx++) {
+          const spec = trackSpecs[idx];
+          onProgress(`Sintetizando pista demo: ${spec.name}...`, Math.round(((idx + 1) / trackSpecs.length) * 90));
+          const offline = new OfflineAudioContext(1, lengthSamples, sampleRate);
+
+          if (spec.name === 'CLICK') {
+            for (let b = 0; b < totalBeats; b++) {
+              const t = b * beatSec;
+              const osc = offline.createOscillator();
+              const gain = offline.createGain();
+              osc.frequency.value = b % 4 === 0 ? 1500 : 1000;
+              gain.gain.setValueAtTime(0.45, t);
+              gain.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+              osc.connect(gain);
+              gain.connect(offline.destination);
+              osc.start(t);
+              osc.stop(t + 0.07);
+            }
+          } else if (spec.name === 'BATERIA') {
+            for (let b = 0; b < totalBeats; b++) {
+              const t = b * beatSec;
+              if (b % 2 === 0) {
+                const kick = offline.createOscillator();
+                const kGain = offline.createGain();
+                kick.frequency.setValueAtTime(140, t);
+                kick.frequency.exponentialRampToValueAtTime(42, t + 0.14);
+                kGain.gain.setValueAtTime(0.7, t);
+                kGain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+                kick.connect(kGain);
+                kGain.connect(offline.destination);
+                kick.start(t);
+                kick.stop(t + 0.2);
+              } else {
+                const snare = offline.createOscillator();
+                snare.type = 'triangle';
+                const sGain = offline.createGain();
+                snare.frequency.setValueAtTime(220, t);
+                snare.frequency.exponentialRampToValueAtTime(110, t + 0.12);
+                sGain.gain.setValueAtTime(0.45, t);
+                sGain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+                snare.connect(sGain);
+                sGain.connect(offline.destination);
+                snare.start(t);
+                snare.stop(t + 0.16);
+              }
+            }
+          } else if (spec.name === 'BAJO') {
+            const rootFreqs = [110.0, 87.31, 130.81, 98.0];
+            for (let bar = 0; bar < bars; bar++) {
+              const freq = rootFreqs[bar % 4];
+              for (let step = 0; step < 8; step++) {
+                const t = (bar * 4 + step * 0.5) * beatSec;
+                const osc = offline.createOscillator();
+                osc.type = 'sawtooth';
+                const filter = offline.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 380;
+                const gain = offline.createGain();
+                osc.frequency.value = step % 2 === 0 ? freq : freq * 1.5;
+                gain.gain.setValueAtTime(0.35, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.22);
+                osc.connect(filter);
+                filter.connect(gain);
+                gain.connect(offline.destination);
+                osc.start(t);
+                osc.stop(t + 0.24);
+              }
+            }
+          } else if (spec.name === 'PIANO') {
+            const chords = [
+              [220.0, 261.63, 329.63],
+              [174.61, 220.0, 261.63],
+              [261.63, 329.63, 392.0],
+              [196.0, 246.94, 293.66]
+            ];
+            for (let bar = 0; bar < bars; bar++) {
+              const notes = chords[bar % 4];
+              const t = bar * 4 * beatSec;
+              notes.forEach((freq) => {
+                const osc = offline.createOscillator();
+                osc.type = 'triangle';
+                const gain = offline.createGain();
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.14, t);
+                gain.gain.exponentialRampToValueAtTime(0.005, t + 1.85);
+                osc.connect(gain);
+                gain.connect(offline.destination);
+                osc.start(t);
+                osc.stop(t + 1.9);
+              });
+            }
+          } else if (spec.name === 'GUITARRA') {
+            const arp = [440, 523.25, 659.25, 523.25];
+            for (let b = 0; b < totalBeats; b++) {
+              const t = b * beatSec;
+              const osc = offline.createOscillator();
+              osc.type = 'sine';
+              const gain = offline.createGain();
+              osc.frequency.value = arp[b % 4];
+              gain.gain.setValueAtTime(0.18, t);
+              gain.gain.exponentialRampToValueAtTime(0.002, t + 0.35);
+              osc.connect(gain);
+              gain.connect(offline.destination);
+              osc.start(t);
+              osc.stop(t + 0.38);
+            }
+          } else if (spec.name === 'PERCUSION') {
+            for (let eighth = 0; eighth < totalBeats * 2; eighth++) {
+              const t = eighth * (beatSec / 2);
+              const osc = offline.createOscillator();
+              osc.type = 'square';
+              const filter = offline.createBiquadFilter();
+              filter.type = 'highpass';
+              filter.frequency.value = 5000;
+              const gain = offline.createGain();
+              osc.frequency.value = 6500;
+              gain.gain.setValueAtTime(eighth % 2 === 1 ? 0.14 : 0.06, t);
+              gain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+              osc.connect(filter);
+              filter.connect(gain);
+              gain.connect(offline.destination);
+              osc.start(t);
+              osc.stop(t + 0.05);
+            }
+          }
+
+          const rendered = await offline.startRendering();
+          const wavBlob = this.audioBufferToWavBlob(rendered);
+          tracks.push({
+            id: generateId('trk'),
+            name: spec.name,
+            isClick: spec.isClick,
+            volume: 1.0,
+            pan: 0.0,
+            muted: false,
+            blob: wavBlob
+          });
+        }
+
+        const totalBytes = tracks.reduce((sum, t) => sum + t.blob.size, 0);
+        return {
+          id: generateId('song'),
+          title: 'Demo En Vivo — Secuencia Base',
+          zipFilename: 'Demo_En_Vivo-Am-120bpm.zip',
+          key: 'Am',
+          bpm,
+          customBpm: bpm,
+          pitchSemitones: 0,
+          duration,
+          sizeBytes: totalBytes,
+          createdAt: Date.now(),
+          tracks
+        };
+      }
+
+      static audioBufferToWavBlob(buffer) {
+        const numChannels = buffer.numberOfChannels;
+        const sampleRate = buffer.sampleRate;
+        const format = 1;
+        const bitDepth = 16;
+        const samples = buffer.getChannelData(0);
+        const dataLength = samples.length * (bitDepth / 8);
+        const arrayBuffer = new ArrayBuffer(44 + dataLength);
+        const view = new DataView(arrayBuffer);
+
+        const writeStr = (offset, str) => {
+          for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+        };
+
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + dataLength, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, format, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * numChannels * 2, true);
+        view.setUint16(32, numChannels * 2, true);
+        view.setUint16(34, bitDepth, true);
+        writeStr(36, 'data');
+        view.setUint32(40, dataLength, true);
+
+        let offset = 44;
+        for (let i = 0; i < samples.length; i++, offset += 2) {
+          const s = Math.max(-1, Math.min(1, samples[i]));
+          view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        }
+
+        return new Blob([arrayBuffer], { type: 'audio/wav' });
+      }
+    }
+
+    // =========================================================================
+    // 6. INTEGRACIÓN Y EXPLORADOR DE GOOGLE DRIVE (GIS + DRIVE REST API v3)
+    // =========================================================================
+    class GoogleDriveSync {
+      constructor() {
+        this.clientId = localStorage.getItem('stagetrack_gdrive_client_id') || '';
+        this.accessToken = null;
+        this.tokenClient = null;
+
+        this.mode = 'my-drive';
+        this.breadcrumbs = [{ id: 'root', name: 'Mi Unidad' }];
+        this.searchQuery = '';
+        this.items = [];
+        this.nextPageToken = null;
+      }
+
+      setClientId(id) {
+        this.clientId = id.trim();
+        localStorage.setItem('stagetrack_gdrive_client_id', this.clientId);
+      }
+
+      authenticate() {
+        return new Promise((resolve, reject) => {
+          if (!this.clientId) {
+            reject(new Error('Por favor pega primero tu Google OAuth Client ID.'));
+            return;
+          }
+          if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
+            reject(new Error('El servicio de Google aún está cargando. Verifica tu conexión a internet e intenta de nuevo.'));
+            return;
+          }
+
+          try {
+            this.tokenClient = window.google.accounts.oauth2.initTokenClient({
+              client_id: this.clientId,
+              scope: 'https://www.googleapis.com/auth/drive.readonly',
+              callback: (tokenResponse) => {
+                if (tokenResponse && tokenResponse.access_token) {
+                  this.accessToken = tokenResponse.access_token;
+                  resolve(this.accessToken);
+                } else {
+                  reject(new Error('No se recibió autorización de Google Drive.'));
+                }
+              },
+              error_callback: (err) => {
+                reject(new Error(err?.message || 'Error al iniciar sesión con Google.'));
+              }
+            });
+
+            this.tokenClient.requestAccessToken({ prompt: this.accessToken ? '' : 'consent' });
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+
+      disconnect() {
+        if (this.accessToken && window.google?.accounts?.oauth2) {
+          try {
+            window.google.accounts.oauth2.revoke(this.accessToken);
+          } catch (_) {}
+        }
+        this.accessToken = null;
+        this.items = [];
+        this.nextPageToken = null;
+      }
+
+      isFolder(item) {
+        return item && item.mimeType === 'application/vnd.google-apps.folder';
+      }
+
+      getCurrentFolder() {
+        return this.breadcrumbs[this.breadcrumbs.length - 1] || { id: 'root', name: 'Mi Unidad' };
+      }
+
+      resetToMode(newMode) {
+        this.mode = newMode;
+        this.searchQuery = '';
+        this.nextPageToken = null;
+        if (newMode === 'my-drive') {
+          this.breadcrumbs = [{ id: 'root', name: 'Mi Unidad' }];
+        } else if (newMode === 'shared') {
+          this.breadcrumbs = [{ id: 'shared', name: 'Compartidos conmigo' }];
+        } else {
+          this.breadcrumbs = [{ id: 'all-zips', name: 'Todos los .ZIP' }];
+        }
+      }
+
+      openFolder(folderId, folderName) {
+        this.searchQuery = '';
+        this.nextPageToken = null;
+        if (this.mode === 'all-zips') {
+          this.mode = 'my-drive';
+          this.breadcrumbs = [
+            { id: 'root', name: 'Mi Unidad' },
+            { id: folderId, name: folderName }
+          ];
+        } else {
+          this.breadcrumbs.push({ id: folderId, name: folderName });
+        }
+      }
+
+      navigateToBreadcrumb(index) {
+        if (index < 0 || index >= this.breadcrumbs.length) return;
+        this.searchQuery = '';
+        this.nextPageToken = null;
+        this.breadcrumbs = this.breadcrumbs.slice(0, index + 1);
+      }
+
+      buildDriveQuery() {
+        const typeFilter = "(mimeType = 'application/vnd.google-apps.folder' or name contains '.zip')";
+
+        if (this.searchQuery.trim().length > 0) {
+          const escaped = this.searchQuery.trim().replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+          return `name contains '${escaped}' and trashed = false and ${typeFilter}`;
+        }
+
+        if (this.mode === 'all-zips') {
+          return `name contains '.zip' and trashed = false`;
+        }
+
+        const current = this.getCurrentFolder();
+        if (this.mode === 'shared' && current.id === 'shared') {
+          return `sharedWithMe = true and trashed = false and ${typeFilter}`;
+        }
+
+        const safeFolderId = current.id.replace(/'/g, "\\'");
+        return `'${safeFolderId}' in parents and trashed = false and ${typeFilter}`;
+      }
+
+      async fetchItems({ append = false } = {}) {
+        if (!this.accessToken) {
+          throw new Error('Conecta tu cuenta de Google Drive primero.');
+        }
+
+        const q = encodeURIComponent(this.buildDriveQuery());
+        const fields = encodeURIComponent('nextPageToken,files(id,name,mimeType,size,modifiedTime,parents,shared)');
+        let url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&orderBy=folder,name&pageSize=100&includeItemsFromAllDrives=true&supportsAllDrives=true`;
+
+        if (append && this.nextPageToken) {
+          url += `&pageToken=${encodeURIComponent(this.nextPageToken)}`;
+        }
+
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${this.accessToken}` }
+        });
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            this.accessToken = null;
+            throw new Error('Tu sesión de Google expiró (401). Pulsa "Conectar con Google" nuevamente.');
+          }
+          if (response.status === 403) {
+            throw new Error('Acceso denegado (403). Verifica que Google Drive API esté habilitada y tu correo esté en Usuarios de prueba.');
+          }
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData?.error?.message || `Error HTTP ${response.status} al consultar Google Drive.`);
+        }
+
+        const data = await response.json();
+        const rawFiles = (data.files || []).filter(
+          f => this.isFolder(f) || /\.zip$/i.test(f.name)
+        );
+
+        const combined = append ? [...this.items, ...rawFiles] : rawFiles;
+
+        combined.sort((a, b) => {
+          const aDir = this.isFolder(a) ? 0 : 1;
+          const bDir = this.isFolder(b) ? 0 : 1;
+          if (aDir !== bDir) return aDir - bDir;
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+        });
+
+        this.items = combined;
+        this.nextPageToken = data.nextPageToken || null;
+        return this.items;
+      }
+
+      async downloadZipFile(fileId, onProgress = () => {}) {
+        if (!this.accessToken) throw new Error('Sesión de Google Drive expirada. Vuelve a conectar.');
+
+        const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`;
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${this.accessToken}` }
+        });
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            this.accessToken = null;
+            throw new Error('Sesión expirada al descargar. Conecta tu Google Drive nuevamente.');
+          }
+          throw new Error(`No se pudo descargar el archivo (Error ${response.status}).`);
+        }
+
+        const contentLength = Number(response.headers.get('content-length')) || 0;
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          if (contentLength > 0) {
+            const pct = Math.min(82, Math.round((received / contentLength) * 80));
+            onProgress(`Descargando desde Google Drive (${formatBytes(received)} / ${formatBytes(contentLength)})...`, pct);
+          } else {
+            onProgress(`Descargando desde Google Drive (${formatBytes(received)})...`, 45);
+          }
+        }
+
+        return new Blob(chunks, { type: 'application/zip' });
+      }
+    }
+
+    // =========================================================================
+    // 7. COMPARTIR Y RECIBIR SETLISTS (URL DIRECTA, JSON Y TEXTO WHATSAPP)
+    // =========================================================================
+    class SetlistSharer {
+      static encodePayload(setlist, songsMeta) {
+        const songs = (setlist.songIds || [])
+          .map(id => songsMeta.find(s => s.id === id))
+          .filter(Boolean)
+          .map(s => ({
+            t: s.title,
+            k: s.key || '—',
+            b: s.bpm || 120,
+            d: s.driveFileId || null,
+            z: s.zipFilename || `${s.title}.zip`
+          }));
+
+        const payload = { v: 1, n: setlist.name, s: songs };
+        const json = JSON.stringify(payload);
+        const b64 = btoa(unescape(encodeURIComponent(json)));
+        return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      static decodePayload(encoded) {
+        const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = b64 + '==='.slice((b64.length + 3) % 4);
+        const json = decodeURIComponent(escape(atob(padded)));
+        const parsed = JSON.parse(json);
+        if (!parsed || !parsed.n || !Array.isArray(parsed.s)) {
+          throw new Error('Formato de setlist compartido inválido.');
+        }
+        return {
+          name: parsed.n,
+          songs: parsed.s.map(item => ({
+            title: item.t || item.title || 'Canción sin título',
+            key: item.k || item.key || '—',
+            bpm: item.b || item.bpm || 120,
+            driveFileId: item.d || item.driveFileId || null,
+            zipFilename: item.z || item.zipFilename || `${item.t || 'secuencia'}.zip`
+          }))
+        };
+      }
+
+      static buildShareUrl(setlist, songsMeta) {
+        const code = this.encodePayload(setlist, songsMeta);
+        const base = `${window.location.origin}${window.location.pathname}`;
+        return `${base}?setlist=${code}`;
+      }
+
+      static buildWhatsappText(setlist, songsMeta) {
+        const validSongs = (setlist.songIds || [])
+          .map(id => songsMeta.find(s => s.id === id))
+          .filter(Boolean);
+
+        const lines = [`🎶 *SETLIST: ${setlist.name.toUpperCase()}*`, ''];
+        validSongs.forEach((s, idx) => {
+          lines.push(`${idx + 1}. *${s.title}* — Tono: ${s.key} | ${s.bpm} BPM`);
+        });
+        return lines.join('\n');
+      }
+    }
+
+    // =========================================================================
+    // 8. CONTROLADOR PRINCIPAL DE INTERFAZ Y ESTADO (APP CONTROLLER)
+    // =========================================================================
+    class StageTrackApp {
+      constructor() {
+        this.storage = new OfflineStorage();
+        this.engine = new MultitrackEngine();
+        this.drive = new GoogleDriveSync();
+
+        this.songsMeta = [];
+        this.setlists = [];
+        this.activeSetlistId = null;
+        this.activeSidebarTab = 'setlist';
+        this.librarySearchTerm = '';
+        this.driveSearchDebounce = null;
+        this.animationFrameId = null;
+        this.isScrubbingWaveform = false;
+        this.pendingIncomingSetlist = null;
+      }
+
+      async init() {
+        await this.storage.init();
+        await this.reloadCatalog();
+        this.setupEventListeners();
+        this.setupWaveformCanvas();
+        this.startRenderLoop();
+
+        document.getElementById('googleClientIdInput').value = this.drive.clientId;
+        document.getElementById('currentOriginDisplay').textContent = window.location.origin;
+
+        const params = new URLSearchParams(window.location.search);
+        const sharedParam = params.get('setlist');
+        if (sharedParam) {
+          try {
+            const decoded = SetlistSharer.decodePayload(sharedParam);
+            this.openIncomingSetlistModal(decoded);
+            window.history.replaceState({}, document.title, window.location.pathname);
+          } catch (err) {
+            console.error(err);
+            showToast('El enlace del setlist compartido está incompleto o dañado.', 'error');
+          }
+        }
+
+        // Cargar la última canción en segundo plano sin bloquear el arranque de la interfaz
+        const lastSongId = localStorage.getItem('stagetrack_last_song_id');
+        const targetSongId = (lastSongId && this.songsMeta.some(s => s.id === lastSongId))
+          ? lastSongId
+          : (this.songsMeta.length > 0 ? this.songsMeta[0].id : null);
+
+        if (targetSongId) {
+          setTimeout(() => {
+            this.selectAndLoadSong(targetSongId, { silent: true });
+          }, 80);
+        }
+      }
+
+      async reloadCatalog() {
+        this.songsMeta = await this.storage.getAllSongsMeta();
+        this.setlists = await this.storage.getAllSetlists();
+
+        if (this.setlists.length === 0) {
+          const defaultSetlist = {
+            id: generateId('set'),
+            name: 'Show En Vivo 2026',
+            songIds: this.songsMeta.map(s => s.id)
+          };
+          await this.storage.saveSetlist(defaultSetlist);
+          this.setlists = [defaultSetlist];
+        }
+
+        const savedSetlistId = localStorage.getItem('stagetrack_active_setlist_id');
+        if (savedSetlistId && this.setlists.some(s => s.id === savedSetlistId)) {
+          this.activeSetlistId = savedSetlistId;
+        } else {
+          this.activeSetlistId = this.setlists[0].id;
+        }
+
+        this.renderSetlistsDropdown();
+        this.renderSidebarLists();
+        this.updateOfflineStats();
+      }
+
+      getActiveSetlist() {
+        return this.setlists.find(s => s.id === this.activeSetlistId) || this.setlists[0];
+      }
+
+      updateOfflineStats() {
+        const totalBytes = this.songsMeta.reduce((acc, s) => acc + (s.sizeBytes || 0), 0);
+        document.getElementById('offlineStatsBadge').textContent =
+          `${this.songsMeta.length} ${this.songsMeta.length === 1 ? 'canción' : 'canciones'} • ${formatBytes(totalBytes)}`;
+        document.getElementById('libraryCountBadge').textContent = this.songsMeta.length;
+        const activeSetlist = this.getActiveSetlist();
+        const validSetlistSongs = (activeSetlist?.songIds || []).filter(id => this.songsMeta.some(s => s.id === id));
+        document.getElementById('setlistCountBadge').textContent = validSetlistSongs.length;
+      }
+
+      // -----------------------------------------------------------------------
+      // IMPORTACIÓN DE ZIP LOCAL Y CANCIÓN DEMO
+      // -----------------------------------------------------------------------
+      async handleLocalZipFiles(fileList) {
+        if (!fileList || fileList.length === 0) return;
+        let lastImportedId = null;
+
+        for (let i = 0; i < fileList.length; i++) {
+          const file = fileList[i];
+          try {
+            setLoading(true, `Importando ${file.name}`, 'Descomprimiendo pistas...', 20);
+            const songRecord = await ZipProcessor.processZipBlob(file, file.name, (msg, pct) => {
+              setLoading(true, `Importando ${file.name}`, msg, pct);
+            });
+            await this.storage.saveSong(songRecord);
+            const activeSetlist = this.getActiveSetlist();
+            if (activeSetlist) {
+              activeSetlist.songIds.push(songRecord.id);
+              await this.storage.saveSetlist(activeSetlist);
+            }
+            lastImportedId = songRecord.id;
+            showToast(`"${songRecord.title}" importada (${songRecord.tracks.length} pistas).`, 'success');
+          } catch (err) {
+            console.error(err);
+            showToast(`Error en ${file.name}: ${err.message}`, 'error');
+          }
+        }
+
+        await this.reloadCatalog();
+        if (lastImportedId) {
+          await this.selectAndLoadSong(lastImportedId);
+        } else {
+          setLoading(false);
+        }
+      }
+
+      async handleLoadDemoSong() {
+        try {
+          setLoading(true, 'Generando Canción Demo...', 'Creando 6 pistas multitrack sincronizadas', 20);
+          const demoSong = await DemoSongGenerator.generateDemoSong((msg, pct) => {
+            setLoading(true, 'Generando Canción Demo...', msg, pct);
+          });
+          await this.storage.saveSong(demoSong);
+
+          const activeSetlist = this.getActiveSetlist();
+          if (activeSetlist) {
+            activeSetlist.songIds.push(demoSong.id);
+            await this.storage.saveSetlist(activeSetlist);
+          }
+
+          await this.reloadCatalog();
+          await this.selectAndLoadSong(demoSong.id);
+          showToast('Canción Demo cargada. Prueba mutear instrumentos o cambiar BPM/Tono en vivo.', 'success');
+        } catch (err) {
+          setLoading(false);
+          console.error(err);
+          showToast(`Error creando demo: ${err.message}`, 'error');
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // CARGA Y CONTROL DE CANCIONES
+      // -----------------------------------------------------------------------
+      async selectAndLoadSong(songId, { silent = false } = {}) {
+        try {
+          if (!silent) {
+            setLoading(true, 'Cargando secuencia...', 'Decodificando pistas de audio multitrack', 35);
+          } else {
+            document.getElementById('activeSongTitle').textContent = 'Preparando secuencia guardada...';
+          }
+
+          const fullRecord = await this.storage.getSong(songId);
+          if (!fullRecord) {
+            if (!silent) showToast('La canción no se encontró en la biblioteca offline.', 'error');
+            return;
+          }
+
+          await this.engine.loadSong(fullRecord, (msg, pct) => {
+            if (!silent) {
+              setLoading(true, 'Preparando mezclador...', msg, pct);
+            }
+          });
+
+          localStorage.setItem('stagetrack_last_song_id', songId);
+          this.updateTransportUI();
+          this.renderMixer();
+          this.renderSidebarLists();
+          this.drawWaveform();
+        } catch (err) {
+          console.error(err);
+          localStorage.removeItem('stagetrack_last_song_id');
+          this.updateTransportUI();
+          showToast(`No se pudo abrir la secuencia previa: ${err.message}`, 'error');
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      async persistCurrentSongPitchAndBpm() {
+        const song = this.engine.currentSong;
+        if (!song) return;
+        const rec = await this.storage.getSong(song.id);
+        if (rec) {
+          rec.customBpm = song.bpm;
+          rec.pitchSemitones = song.pitchSemitones;
+          await this.storage.saveSong(rec);
+          await this.reloadCatalog();
+        }
+      }
+
+      updateTransportUI() {
+        const song = this.engine.currentSong;
+        const titleEl = document.getElementById('activeSongTitle');
+        const metaBadge = document.getElementById('activeSongMetaBadge');
+        const indicator = document.getElementById('activeSongIndicator');
+        const emptyHint = document.getElementById('waveformEmptyHint');
+
+        if (!song) {
+          titleEl.textContent = 'Ninguna canción cargada';
+          metaBadge.classList.add('hidden');
+          indicator.className = 'w-2.5 h-2.5 rounded-full bg-gray-600 shrink-0';
+          emptyHint.classList.remove('hidden');
+          document.getElementById('timeTotal').textContent = '00:00';
+          document.getElementById('displayBpm').textContent = '120';
+          document.getElementById('displayBpmSub').textContent = 'BPM';
+          document.getElementById('displayKey').textContent = '—';
+          document.getElementById('displayPitchSub').textContent = '0 ST';
+          document.getElementById('btnBpmReset').classList.add('hidden');
+          document.getElementById('btnPitchReset').classList.add('hidden');
+          document.getElementById('activeTracksCounter').textContent = '0 canales';
+          return;
+        }
+
+        const tempoRatio = this.engine.getTempoRatio();
+        const effectiveDuration = song.duration / tempoRatio;
+        const semitones = song.pitchSemitones || 0;
+        const bpmModified = song.bpm !== song.originalBpm;
+
+        titleEl.textContent = song.title;
+        metaBadge.textContent = `${song.tracks.length} pistas • ${song.key} • ${song.bpm} BPM`;
+        metaBadge.classList.remove('hidden');
+        emptyHint.classList.add('hidden');
+
+        indicator.className = this.engine.isPlaying
+          ? 'w-2.5 h-2.5 rounded-full bg-[#00d2ff] animate-pulse shrink-0'
+          : 'w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0';
+
+        document.getElementById('timeTotal').textContent = formatTime(effectiveDuration);
+
+        // Actualizar Display BPM
+        const bpmEl = document.getElementById('displayBpm');
+        const bpmSub = document.getElementById('displayBpmSub');
+        const btnBpmReset = document.getElementById('btnBpmReset');
+        bpmEl.textContent = song.bpm;
+        if (bpmModified) {
+          bpmEl.className = 'font-mono text-xs sm:text-sm font-bold text-amber-400 leading-tight';
+          bpmSub.textContent = `ORIG ${song.originalBpm}`;
+          bpmSub.className = 'text-[9px] font-bold tracking-wider text-amber-400/80 uppercase';
+          btnBpmReset.classList.remove('hidden');
+        } else {
+          bpmEl.className = 'font-mono text-xs sm:text-sm font-bold text-white leading-tight';
+          bpmSub.textContent = 'BPM';
+          bpmSub.className = 'text-[9px] font-bold tracking-wider text-gray-400 uppercase';
+          btnBpmReset.classList.add('hidden');
+        }
+
+        // Actualizar Display Tono y Semitonos
+        const keyEl = document.getElementById('displayKey');
+        const pitchSub = document.getElementById('displayPitchSub');
+        const btnPitchReset = document.getElementById('btnPitchReset');
+        keyEl.textContent = song.key;
+        if (semitones !== 0) {
+          keyEl.className = 'font-mono text-xs sm:text-sm font-bold text-amber-400 leading-tight';
+          pitchSub.textContent = `${semitones > 0 ? '+' : ''}${semitones} ST (ORIG ${song.baseKey})`;
+          pitchSub.className = 'text-[9px] font-bold tracking-wider text-amber-400/80 uppercase';
+          btnPitchReset.classList.remove('hidden');
+        } else {
+          keyEl.className = 'font-mono text-xs sm:text-sm font-bold text-[#00d2ff] leading-tight';
+          pitchSub.textContent = '0 ST';
+          pitchSub.className = 'text-[9px] font-bold tracking-wider text-gray-400 uppercase';
+          btnPitchReset.classList.add('hidden');
+        }
+
+        document.getElementById('activeTracksCounter').textContent = `${song.tracks.length} canales`;
+
+        const dspBadge = document.getElementById('dspEngineBadge');
+        if (dspBadge) {
+          if (this.engine.isTimeOrPitchModified()) {
+            dspBadge.textContent = this.engine.activeEngineMode === 'wsola' ? 'DSP WSOLA Activo' : 'DSP Studio Activo';
+            dspBadge.classList.remove('hidden');
+          } else {
+            dspBadge.classList.add('hidden');
+          }
+        }
+
+        const iconPlay = document.getElementById('iconPlay');
+        const iconPause = document.getElementById('iconPause');
+        const labelPlay = document.getElementById('labelPlayPause');
+        const btnPlay = document.getElementById('btnPlayPause');
+
+        if (this.engine.isPlaying) {
+          iconPlay.classList.add('hidden');
+          iconPause.classList.remove('hidden');
+          labelPlay.textContent = 'PAUSA';
+          btnPlay.classList.add('playing-glow');
+        } else {
+          iconPlay.classList.remove('hidden');
+          iconPause.classList.add('hidden');
+          labelPlay.textContent = 'PLAY';
+          btnPlay.classList.remove('playing-glow');
+        }
+
+        const btnLoop = document.getElementById('btnLoop');
+        if (this.engine.isLooping) {
+          btnLoop.classList.remove('text-gray-400', 'bg-[#1f2937]');
+          btnLoop.classList.add('text-[#00d2ff]', 'bg-[#00d2ff]/15', 'border-[#00d2ff]/50');
+        } else {
+          btnLoop.classList.add('text-gray-400', 'bg-[#1f2937]');
+          btnLoop.classList.remove('text-[#00d2ff]', 'bg-[#00d2ff]/15', 'border-[#00d2ff]/50');
+        }
+
+        const btnSplit = document.getElementById('btnSplitLive');
+        const btnStereo = document.getElementById('btnStereoCenter');
+        if (this.engine.splitLiveMode) {
+          btnSplit.className = 'px-2.5 py-2 rounded-lg text-xs font-extrabold bg-[#ff4757]/20 text-[#ff4757] border border-[#ff4757]/50 transition flex items-center gap-1.5';
+          btnStereo.className = 'px-2.5 py-2 rounded-lg text-xs font-bold text-gray-400 hover:text-white transition';
+        } else {
+          btnSplit.className = 'px-2.5 py-2 rounded-lg text-xs font-bold text-gray-300 hover:text-white transition flex items-center gap-1.5';
+          btnStereo.className = 'px-2.5 py-2 rounded-lg text-xs font-extrabold bg-[#1f2937] text-[#00d2ff] transition';
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // CANVAS DE FORMA DE ONDA E INDICADOR DE REPRODUCCIÓN
+      // -----------------------------------------------------------------------
+      setupWaveformCanvas() {
+        const container = document.getElementById('waveformContainer');
+        const canvas = document.getElementById('waveformCanvas');
+
+        const resize = () => {
+          const rect = container.getBoundingClientRect();
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+          canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+          this.drawWaveform();
+        };
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        const seekFromPointer = (clientX) => {
+          if (!this.engine.currentSong) return;
+          const rect = container.getBoundingClientRect();
+          const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+          this.engine.seekTo(ratio * this.engine.currentSong.duration);
+          const tempoRatio = this.engine.getTempoRatio();
+          document.getElementById('timeElapsed').textContent = formatTime(this.engine.getCurrentTime() / tempoRatio);
+          this.drawWaveform();
+        };
+
+        container.addEventListener('pointerdown', (e) => {
+          if (!this.engine.currentSong) return;
+          this.isScrubbingWaveform = true;
+          container.setPointerCapture(e.pointerId);
+          seekFromPointer(e.clientX);
+        });
+
+        container.addEventListener('pointermove', (e) => {
+          if (this.isScrubbingWaveform && container.hasPointerCapture(e.pointerId)) {
+            seekFromPointer(e.clientX);
+          }
+        });
+
+        container.addEventListener('pointerup', () => {
+          this.isScrubbingWaveform = false;
+        });
+      }
+
+      drawWaveform() {
+        const canvas = document.getElementById('waveformCanvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, h / 2);
+        ctx.lineTo(w, h / 2);
+        ctx.stroke();
+
+        const song = this.engine.currentSong;
+        if (!song || song.duration <= 0) return;
+
+        const currentSec = this.engine.getCurrentTime();
+        const progressRatio = Math.max(0, Math.min(1, currentSec / song.duration));
+        const peaks = this.engine.waveformPeaks;
+
+        if (peaks && peaks.length > 0) {
+          const barWidth = w / peaks.length;
+          for (let i = 0; i < peaks.length; i++) {
+            const x = i * barWidth;
+            const barRatio = i / peaks.length;
+            const amp = Math.max(0.06, peaks[i]) * (h * 0.82);
+            ctx.fillStyle = barRatio <= progressRatio ? '#00d2ff' : 'rgba(148, 163, 184, 0.35)';
+            ctx.fillRect(x + 1, (h - amp) / 2, Math.max(1, barWidth - 2), amp);
+          }
+        }
+
+        const headX = progressRatio * w;
+        ctx.fillStyle = '#ff4757';
+        ctx.fillRect(Math.max(0, headX - 1.5), 0, 3, h);
+      }
+
+      startRenderLoop() {
+        const tick = () => {
+          if (this.engine.currentSong && this.engine.isPlaying) {
+            const currentBufferSec = this.engine.getCurrentTime();
+            const duration = this.engine.currentSong.duration;
+
+            // Detener limpiamente al llegar al final si el bucle está apagado
+            if (!this.engine.isLooping && duration > 0 && currentBufferSec >= duration - 0.03) {
+              this.engine.stop();
+              this.updateTransportUI();
+              this.drawWaveform();
+              document.getElementById('timeElapsed').textContent = '00:00';
+              this.animationFrameId = requestAnimationFrame(tick);
+              return;
+            }
+
+            const tempoRatio = this.engine.getTempoRatio();
+            document.getElementById('timeElapsed').textContent = formatTime(currentBufferSec / tempoRatio);
+            this.drawWaveform();
+
+            const meters = this.engine.getMeterLevels();
+            const masterFill = document.getElementById('masterMeterFill');
+            if (masterFill) masterFill.style.height = `${meters.master}%`;
+
+            document.querySelectorAll('.channel-strip').forEach((strip) => {
+              const trkId = strip.dataset.trackId;
+              const vu = strip.querySelector('.vu-meter-fill');
+              if (vu) vu.style.height = `${meters.tracks[trkId] || 0}%`;
+            });
+          } else {
+            const masterFill = document.getElementById('masterMeterFill');
+            if (masterFill && masterFill.style.height !== '0%') {
+              masterFill.style.height = '0%';
+              document.querySelectorAll('.vu-meter-fill').forEach(vu => { vu.style.height = '0%'; });
+            }
+          }
+          this.animationFrameId = requestAnimationFrame(tick);
+        };
+        this.animationFrameId = requestAnimationFrame(tick);
+      }
+
+      // -----------------------------------------------------------------------
+      // RENDERIZADO DEL MEZCLADOR DE INSTRUMENTOS (FADERS TÁCTILES + M / S / PAN)
+      // -----------------------------------------------------------------------
+      renderMixer() {
+        const grid = document.getElementById('mixerGrid');
+        const song = this.engine.currentSong;
+
+        if (!song || song.tracks.length === 0) return;
+
+        const anySolo = song.tracks.some(t => t.solo);
+        grid.innerHTML = '';
+
+        song.tracks.forEach((track) => {
+          const isMutedEffective = anySolo ? !track.solo : track.muted;
+          const accentHex = track.isClick ? '#ff4757' : '#00d2ff';
+          const pctVolume = Math.round(track.volume * 100);
+          const faderFillPct = Math.min(100, Math.round((track.volume / 1.2) * 100));
+
+          const strip = document.createElement('div');
+          strip.dataset.trackId = track.id;
+          strip.className = `channel-strip bg-[#0d1117] rounded-2xl border ${
+            track.isClick ? 'border-[#ff4757]/35' : 'border-[#262f3d]'
+          } p-2.5 flex flex-col justify-between transition-opacity duration-150 ${
+            isMutedEffective ? 'opacity-45' : 'opacity-100'
+          }`;
+
+          const panLabel =
+            track.pan <= -0.95 ? '100% L' :
+            track.pan >= 0.95 ? '100% R' :
+            Math.abs(track.pan) < 0.05 ? 'CENTRO' :
+            track.pan < 0 ? `${Math.round(Math.abs(track.pan) * 100)}% L` :
+            `${Math.round(track.pan * 100)}% R`;
+
+          strip.innerHTML = `
+            <div class="mb-2">
+              <div class="flex items-center justify-between gap-1">
+                <span class="text-[11px] sm:text-xs font-extrabold tracking-wide truncate ${
+                  track.isClick ? 'text-[#ff4757]' : 'text-white'
+                }" title="${track.name}">${track.name}</span>
+                ${track.isClick ? '<span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-[#ff4757]/20 text-[#ff4757] shrink-0">GUÍA</span>' : ''}
+              </div>
+              <div class="flex items-center justify-between mt-1 text-[10px] font-mono text-gray-400">
+                <span class="volume-pct-label font-bold text-gray-200">${pctVolume}%</span>
+                <span class="pan-text-label">${panLabel}</span>
+              </div>
+            </div>
+
+            <div class="mb-2.5 space-y-1">
+              <div class="grid grid-cols-3 gap-1">
+                <button type="button" data-pan="-1" class="btn-pan-preset py-1 rounded text-[10px] font-extrabold transition ${
+                  track.pan <= -0.9 ? 'bg-[#ff4757] text-white' : 'bg-[#1f2937] text-gray-400 hover:text-white'
+                }">L</button>
+                <button type="button" data-pan="0" class="btn-pan-preset py-1 rounded text-[10px] font-extrabold transition ${
+                  Math.abs(track.pan) < 0.1 ? 'bg-[#00d2ff] text-[#0d1117]' : 'bg-[#1f2937] text-gray-400 hover:text-white'
+                }">C</button>
+                <button type="button" data-pan="1" class="btn-pan-preset py-1 rounded text-[10px] font-extrabold transition ${
+                  track.pan >= 0.9 ? 'bg-[#00d2ff] text-[#0d1117]' : 'bg-[#1f2937] text-gray-400 hover:text-white'
+                }">R</button>
+              </div>
+              <input type="range" min="-1" max="1" step="0.05" value="${track.pan}" class="pan-slider w-full block" title="Paneo Izquierda / Derecha" />
+            </div>
+
+            <div class="flex items-stretch gap-2 h-36 sm:h-44 my-1">
+              <div class="w-2 bg-[#161b22] rounded-full overflow-hidden flex flex-col justify-end border border-gray-800">
+                <div class="vu-meter-fill w-full transition-all duration-75" style="height: 0%; background-color: ${accentHex};"></div>
+              </div>
+
+              <div class="fader-track flex-1 bg-[#161b22] rounded-xl border border-[#262f3d] flex flex-col justify-end relative">
+                <div class="fader-fill w-full rounded-b-xl transition-none pointer-events-none" style="height: ${faderFillPct}%; background-color: ${accentHex}; opacity: 0.9;"></div>
+                <div class="absolute left-0 right-0 border-t border-dashed border-white/30 pointer-events-none" style="bottom: 83.3%;"></div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-1.5 mt-2.5">
+              <button type="button" class="btn-mute h-11 rounded-xl font-extrabold text-sm transition active:scale-95 border ${
+                track.muted
+                  ? 'bg-[#ff4757] text-white border-[#ff4757] shadow-lg shadow-[#ff4757]/30'
+                  : 'bg-[#1f2937] hover:bg-[#2d3748] text-gray-200 border-[#2d3748]'
+              }" title="Apagar / Mutear instrumento (M)">
+                M
+              </button>
+              <button type="button" class="btn-solo h-11 rounded-xl font-extrabold text-sm transition active:scale-95 border ${
+                track.solo
+                  ? 'bg-amber-400 text-[#0d1117] border-amber-300 shadow-lg shadow-amber-400/30'
+                  : 'bg-[#1f2937] hover:bg-[#2d3748] text-gray-200 border-[#2d3748]'
+              }" title="Aislar instrumento en Solo (S)">
+                S
+              </button>
+            </div>
+          `;
+
+          const faderTrack = strip.querySelector('.fader-track');
+          const updateFaderFromPointer = (clientY) => {
+            const rect = faderTrack.getBoundingClientRect();
+            const ratio = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+            const newVol = ratio * 1.2;
+            this.engine.setTrackVolume(track.id, newVol);
+
+            const fillEl = strip.querySelector('.fader-fill');
+            const pctEl = strip.querySelector('.volume-pct-label');
+            fillEl.style.height = `${Math.round(ratio * 100)}%`;
+            pctEl.textContent = `${Math.round(newVol * 100)}%`;
+          };
+
+          faderTrack.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            faderTrack.setPointerCapture(e.pointerId);
+            updateFaderFromPointer(e.clientY);
+          });
+          faderTrack.addEventListener('pointermove', (e) => {
+            if (faderTrack.hasPointerCapture(e.pointerId)) {
+              updateFaderFromPointer(e.clientY);
+            }
+          });
+
+          const panSlider = strip.querySelector('.pan-slider');
+          panSlider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            this.engine.setTrackPan(track.id, val);
+            this.engine.splitLiveMode = false;
+            this.updateTransportUI();
+            this.renderMixer();
+          });
+
+          strip.querySelectorAll('.btn-pan-preset').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              const val = parseFloat(btn.dataset.pan);
+              this.engine.setTrackPan(track.id, val);
+              this.engine.splitLiveMode = false;
+              this.updateTransportUI();
+              this.renderMixer();
+            });
+          });
+
+          strip.querySelector('.btn-mute').addEventListener('click', () => {
+            this.engine.toggleMute(track.id);
+            this.renderMixer();
+          });
+
+          strip.querySelector('.btn-solo').addEventListener('click', () => {
+            this.engine.toggleSolo(track.id);
+            this.renderMixer();
+          });
+
+          grid.appendChild(strip);
+        });
+      }
+
+      // -----------------------------------------------------------------------
+      // RENDERIZADO DE SETLISTS Y BIBLIOTECA OFFLINE
+      // -----------------------------------------------------------------------
+      renderSetlistsDropdown() {
+        const select = document.getElementById('setlistSelect');
+        select.innerHTML = '';
+        this.setlists.forEach((setlist) => {
+          const opt = document.createElement('option');
+          opt.value = setlist.id;
+          opt.textContent = setlist.name;
+          if (setlist.id === this.activeSetlistId) opt.selected = true;
+          select.appendChild(opt);
+        });
+      }
+
+      renderSidebarLists() {
+        this.updateOfflineStats();
+        const setlistContainer = document.getElementById('setlistSongsContainer');
+        const libraryContainer = document.getElementById('librarySongsContainer');
+
+        const activeSetlist = this.getActiveSetlist();
+        const validIds = (activeSetlist?.songIds || []).filter(id => this.songsMeta.some(s => s.id === id));
+
+        if (validIds.length === 0) {
+          setlistContainer.innerHTML = `
+            <div class="text-center py-8 px-3 border border-dashed border-[#262f3d] rounded-xl text-xs text-gray-500">
+              Este setlist está vacío.<br/>Importa canciones o agrégalas desde la pestaña <strong>Biblioteca</strong>.
+            </div>
+          `;
+        } else {
+          setlistContainer.innerHTML = '';
+          validIds.forEach((songId, index) => {
+            const song = this.songsMeta.find(s => s.id === songId);
+            if (!song) return;
+            const isCurrent = this.engine.currentSong?.id === song.id;
+
+            const card = document.createElement('div');
+            card.className = `p-2.5 rounded-xl border transition flex items-center justify-between gap-2 ${
+              isCurrent
+                ? 'bg-[#00d2ff]/12 border-[#00d2ff]/60'
+                : 'bg-[#0d1117] hover:bg-[#1f2937]/70 border-[#262f3d]'
+            }`;
+
+            card.innerHTML = `
+              <button type="button" class="btn-select-song flex-1 text-left min-w-0 flex items-center gap-2.5">
+                <span class="w-6 h-6 rounded-lg font-mono text-xs font-extrabold flex items-center justify-center shrink-0 ${
+                  isCurrent ? 'bg-[#00d2ff] text-[#0d1117]' : 'bg-[#1f2937] text-gray-400'
+                }">${index + 1}</span>
+                <div class="min-w-0 flex-1">
+                  <div class="text-xs sm:text-sm font-bold truncate ${isCurrent ? 'text-[#00d2ff]' : 'text-white'}">${song.title}</div>
+                  <div class="text-[11px] font-mono text-gray-400 flex items-center gap-1.5 mt-0.5">
+                    <span>${song.key}</span>
+                    <span>•</span>
+                    <span>${song.bpm} BPM</span>
+                    <span>•</span>
+                    <span class="text-emerald-400">Offline</span>
+                  </div>
+                </div>
+              </button>
+              <div class="flex items-center gap-1 shrink-0">
+                <button type="button" class="btn-move-up w-7 h-7 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] text-gray-300 text-xs flex items-center justify-center ${index === 0 ? 'opacity-30 pointer-events-none' : ''}" title="Subir">↑</button>
+                <button type="button" class="btn-move-down w-7 h-7 rounded-lg bg-[#1f2937] hover:bg-[#2d3748] text-gray-300 text-xs flex items-center justify-center ${index === validIds.length - 1 ? 'opacity-30 pointer-events-none' : ''}" title="Bajar">↓</button>
+                <button type="button" class="btn-remove-from-setlist w-7 h-7 rounded-lg bg-[#1f2937] hover:bg-red-950/70 text-gray-400 hover:text-[#ff4757] text-xs flex items-center justify-center" title="Quitar del setlist">✕</button>
+              </div>
+            `;
+
+            card.querySelector('.btn-select-song').addEventListener('click', () => this.selectAndLoadSong(song.id));
+            card.querySelector('.btn-move-up').addEventListener('click', () => this.moveSongInSetlist(index, -1));
+            card.querySelector('.btn-move-down').addEventListener('click', () => this.moveSongInSetlist(index, 1));
+            card.querySelector('.btn-remove-from-setlist').addEventListener('click', () => this.removeSongFromSetlist(index));
+
+            setlistContainer.appendChild(card);
+          });
+        }
+
+        const filteredLibrary = this.songsMeta.filter(s =>
+          s.title.toLowerCase().includes(this.librarySearchTerm.toLowerCase()) ||
+          (s.key && s.key.toLowerCase().includes(this.librarySearchTerm.toLowerCase()))
+        );
+
+        if (filteredLibrary.length === 0) {
+          libraryContainer.innerHTML = `
+            <div class="text-center py-8 px-3 border border-dashed border-[#262f3d] rounded-xl text-xs text-gray-500">
+              ${this.songsMeta.length === 0
+                ? 'Aún no tienes canciones guardadas en el dispositivo.'
+                : 'Ninguna canción descargada coincide con tu búsqueda.'}
+            </div>
+          `;
+        } else {
+          libraryContainer.innerHTML = '';
+          filteredLibrary.forEach((song) => {
+            const isCurrent = this.engine.currentSong?.id === song.id;
+            const inSetlist = validIds.includes(song.id);
+
+            const item = document.createElement('div');
+            item.className = `p-2.5 rounded-xl border transition flex items-center justify-between gap-2 ${
+              isCurrent ? 'bg-[#00d2ff]/12 border-[#00d2ff]/60' : 'bg-[#0d1117] border-[#262f3d]'
+            }`;
+
+            item.innerHTML = `
+              <button type="button" class="btn-load-lib-song flex-1 text-left min-w-0">
+                <div class="text-xs sm:text-sm font-bold text-white truncate">${song.title}</div>
+                <div class="text-[11px] font-mono text-gray-400 mt-0.5">
+                  ${song.key} • ${song.bpm} BPM • ${song.trackCount} pistas (${formatBytes(song.sizeBytes)})
+                </div>
+              </button>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <button type="button" class="btn-add-setlist px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition ${
+                  inSetlist
+                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-[#1f2937] hover:bg-[#2d3748] text-[#00d2ff]'
+                }" title="Agregar al setlist activo">
+                  ${inSetlist ? '+ Otro' : '+ Setlist'}
+                </button>
+                <button type="button" class="btn-delete-lib w-8 h-8 rounded-lg bg-[#1f2937] hover:bg-red-950/70 text-gray-400 hover:text-[#ff4757] text-xs flex items-center justify-center" title="Eliminar del dispositivo">
+                  🗑
+                </button>
+              </div>
+            `;
+
+            item.querySelector('.btn-load-lib-song').addEventListener('click', () => this.selectAndLoadSong(song.id));
+            item.querySelector('.btn-add-setlist').addEventListener('click', () => this.addSongToActiveSetlist(song.id));
+            item.querySelector('.btn-delete-lib').addEventListener('click', () => this.deleteSongFromLibrary(song));
+
+            libraryContainer.appendChild(item);
+          });
+        }
+      }
+
+      async addSongToActiveSetlist(songId) {
+        const setlist = this.getActiveSetlist();
+        if (!setlist) return;
+        setlist.songIds.push(songId);
+        await this.storage.saveSetlist(setlist);
+        this.renderSidebarLists();
+        showToast('Canción agregada al setlist activo', 'success');
+      }
+
+      async moveSongInSetlist(index, direction) {
+        const setlist = this.getActiveSetlist();
+        if (!setlist) return;
+        const targetIdx = index + direction;
+        if (targetIdx < 0 || targetIdx >= setlist.songIds.length) return;
+        const temp = setlist.songIds[index];
+        setlist.songIds[index] = setlist.songIds[targetIdx];
+        setlist.songIds[targetIdx] = temp;
+        await this.storage.saveSetlist(setlist);
+        this.renderSidebarLists();
+      }
+
+      async removeSongFromSetlist(index) {
+        const setlist = this.getActiveSetlist();
+        if (!setlist) return;
+        setlist.songIds.splice(index, 1);
+        await this.storage.saveSetlist(setlist);
+        this.renderSidebarLists();
+      }
+
+      async deleteSongFromLibrary(songMeta) {
+        const confirmed = await openCustomDialog({
+          title: 'Eliminar secuencia offline',
+          message: `¿Seguro que deseas eliminar "${songMeta.title}" (${formatBytes(songMeta.sizeBytes)}) de este dispositivo?`,
+          confirmText: 'Eliminar',
+          isDanger: true
+        });
+        if (!confirmed) return;
+
+        if (this.engine.currentSong?.id === songMeta.id) {
+          this.engine.stop();
+          this.engine.currentSong = null;
+          this.updateTransportUI();
+          document.getElementById('mixerGrid').innerHTML = '';
+        }
+
+        await this.storage.deleteSong(songMeta.id);
+        for (const setlist of this.setlists) {
+          setlist.songIds = setlist.songIds.filter(id => id !== songMeta.id);
+          await this.storage.saveSetlist(setlist);
+        }
+        await this.reloadCatalog();
+        showToast(`"${songMeta.title}" eliminada del almacenamiento local.`, 'info');
+      }
+
+      async playAdjacentSong(offset) {
+        const setlist = this.getActiveSetlist();
+        const validIds = (setlist?.songIds || []).filter(id => this.songsMeta.some(s => s.id === id));
+        if (validIds.length === 0) return;
+
+        const currentId = this.engine.currentSong?.id;
+        const currentIdx = validIds.indexOf(currentId);
+        let nextIdx = currentIdx === -1 ? 0 : (currentIdx + offset + validIds.length) % validIds.length;
+        await this.selectAndLoadSong(validIds[nextIdx]);
+      }
+
+      // -----------------------------------------------------------------------
+      // COMPARTIR Y RECIBIR SETLISTS
+      // -----------------------------------------------------------------------
+      openShareSetlistModal() {
+        const setlist = this.getActiveSetlist();
+        if (!setlist) return;
+
+        const validSongs = (setlist.songIds || [])
+          .map(id => this.songsMeta.find(s => s.id === id))
+          .filter(Boolean);
+
+        if (validSongs.length === 0) {
+          showToast('Agrega al menos una canción al setlist antes de compartirlo.', 'info');
+          return;
+        }
+
+        document.getElementById('shareSetlistTitleDisplay').textContent = `Compartir "${setlist.name}"`;
+        document.getElementById('shareSetlistSummaryDisplay').textContent =
+          `${validSongs.length} ${validSongs.length === 1 ? 'canción' : 'canciones'} en este repertorio`;
+
+        document.getElementById('shareUrlInput').value = SetlistSharer.buildShareUrl(setlist, this.songsMeta);
+        document.getElementById('shareWhatsappText').value = SetlistSharer.buildWhatsappText(setlist, this.songsMeta);
+        document.getElementById('shareSetlistModal').classList.remove('hidden');
+      }
+
+      exportActiveSetlistJson() {
+        const setlist = this.getActiveSetlist();
+        if (!setlist) return;
+
+        const songs = (setlist.songIds || [])
+          .map(id => this.songsMeta.find(s => s.id === id))
+          .filter(Boolean)
+          .map(s => ({
+            title: s.title,
+            key: s.key || '—',
+            bpm: s.bpm || 120,
+            driveFileId: s.driveFileId || null,
+            zipFilename: s.zipFilename || `${s.title}.zip`
+          }));
+
+        const data = {
+          app: 'StageTrack Live',
+          version: 1,
+          name: setlist.name,
+          exportedAt: new Date().toISOString(),
+          songs
+        };
+
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const safeName = setlist.name.replace(/[^a-zA-Z0-9_-]+/g, '_');
+        a.href = url;
+        a.download = `${safeName}.stagetrack.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Archivo de setlist descargado (.stagetrack.json).', 'success');
+      }
+
+      openIncomingSetlistModal(decodedSetlist) {
+        this.pendingIncomingSetlist = decodedSetlist;
+        document.getElementById('incomingSetlistTitle').textContent = decodedSetlist.name;
+        document.getElementById('incomingSetlistSubtitle').textContent =
+          `${decodedSetlist.songs.length} ${decodedSetlist.songs.length === 1 ? 'canción' : 'canciones'} incluidas`;
+
+        this.renderIncomingSetlistSongs();
+        document.getElementById('incomingSetlistModal').classList.remove('hidden');
+      }
+
+      renderIncomingSetlistSongs() {
+        const listEl = document.getElementById('incomingSetlistSongsList');
+        const incoming = this.pendingIncomingSetlist;
+        if (!incoming) return;
+
+        listEl.innerHTML = '';
+        incoming.songs.forEach((songItem, idx) => {
+          const localMatch = this.songsMeta.find(
+            s => (songItem.driveFileId && s.driveFileId === songItem.driveFileId) ||
+                 s.title.toLowerCase() === songItem.title.toLowerCase()
+          );
+
+          const row = document.createElement('div');
+          row.className = 'bg-[#0d1117] border border-[#262f3d] rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-2.5';
+          row.innerHTML = `
+            <div class="flex items-center gap-2.5 min-w-0 flex-1">
+              <span class="w-6 h-6 rounded-lg bg-[#1f2937] text-gray-300 font-mono text-xs font-extrabold flex items-center justify-center shrink-0">${idx + 1}</span>
+              <div class="min-w-0 flex-1">
+                <div class="text-xs sm:text-sm font-bold text-white truncate">${songItem.title}</div>
+                <div class="text-[11px] font-mono text-gray-400 mt-0.5">
+                  <span class="text-[#00d2ff]">${songItem.key}</span> • ${songItem.bpm} BPM
+                </div>
+              </div>
+            </div>
+            <div class="shrink-0">
+              ${localMatch
+                ? '<span class="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">✓ Lista Offline</span>'
+                : songItem.driveFileId
+                  ? '<button type="button" class="btn-fetch-shared-drive px-3 py-1.5 rounded-lg bg-[#00d2ff] hover:bg-[#00b8e6] text-[#0d1117] text-xs font-extrabold transition">⬇ Bajar de Drive</button>'
+                  : '<span class="text-[11px] text-amber-400 font-semibold">Importar .ZIP manual</span>'
+              }
+            </div>
+          `;
+
+          const btnFetch = row.querySelector('.btn-fetch-shared-drive');
+          if (btnFetch) {
+            btnFetch.addEventListener('click', async () => {
+              if (!this.drive.accessToken) {
+                document.getElementById('incomingSetlistModal').classList.add('hidden');
+                document.getElementById('driveModal').classList.remove('hidden');
+                showToast('Conecta tu Google Drive primero para descargar esta secuencia compartida.', 'info');
+                return;
+              }
+              await this.downloadAndImportDriveFile({
+                id: songItem.driveFileId,
+                name: songItem.zipFilename || `${songItem.title}.zip`
+              });
+              this.renderIncomingSetlistSongs();
+            });
+          }
+
+          listEl.appendChild(row);
+        });
+      }
+
+      async saveIncomingSetlistToLibrary() {
+        const incoming = this.pendingIncomingSetlist;
+        if (!incoming) return;
+
+        const matchedSongIds = [];
+        incoming.songs.forEach((songItem) => {
+          const localMatch = this.songsMeta.find(
+            s => (songItem.driveFileId && s.driveFileId === songItem.driveFileId) ||
+                 s.title.toLowerCase() === songItem.title.toLowerCase()
+          );
+          if (localMatch) matchedSongIds.push(localMatch.id);
+        });
+
+        const newSetlist = {
+          id: generateId('set'),
+          name: incoming.name,
+          songIds: matchedSongIds
+        };
+
+        await this.storage.saveSetlist(newSetlist);
+        this.activeSetlistId = newSetlist.id;
+        localStorage.setItem('stagetrack_active_setlist_id', this.activeSetlistId);
+        await this.reloadCatalog();
+
+        document.getElementById('incomingSetlistModal').classList.add('hidden');
+        this.pendingIncomingSetlist = null;
+
+        if (matchedSongIds.length > 0) {
+          await this.selectAndLoadSong(matchedSongIds[0]);
+        }
+        showToast(`Setlist "${newSetlist.name}" guardado (${matchedSongIds.length}/${incoming.songs.length} canciones descargadas).`, 'success');
+      }
+
+      // -----------------------------------------------------------------------
+      // EXPLORADOR DE GOOGLE DRIVE (CARPETAS, BREADCRUMBS, BÚSQUEDA Y DESCARGA)
+      // -----------------------------------------------------------------------
+      setDriveError(message = '') {
+        const banner = document.getElementById('driveErrorBanner');
+        if (!message) {
+          banner.textContent = '';
+          banner.classList.add('hidden');
+        } else {
+          banner.textContent = message;
+          banner.classList.remove('hidden');
+        }
+      }
+
+      updateDriveTabsUI() {
+        document.querySelectorAll('.drive-mode-tab').forEach((btn) => {
+          const isActive = btn.dataset.driveMode === this.drive.mode && !this.drive.searchQuery.trim();
+          btn.className = isActive
+            ? 'drive-mode-tab px-3 py-2 rounded-lg text-xs font-extrabold bg-[#1f2937] text-[#00d2ff] transition flex items-center justify-center gap-1.5'
+            : 'drive-mode-tab px-3 py-2 rounded-lg text-xs font-extrabold text-gray-400 hover:text-white transition flex items-center justify-center gap-1.5';
+        });
+      }
+
+      renderDriveBreadcrumbs() {
+        const container = document.getElementById('driveBreadcrumbs');
+        const btnUp = document.getElementById('btnDriveNavigateUp');
+        container.innerHTML = '';
+
+        if (this.drive.searchQuery.trim()) {
+          btnUp.classList.add('hidden');
+          container.innerHTML = `
+            <span class="text-gray-400">Búsqueda en Drive:</span>
+            <span class="text-[#00d2ff] font-extrabold">"${this.drive.searchQuery.trim()}"</span>
+          `;
+          return;
+        }
+
+        const crumbs = this.drive.breadcrumbs;
+        if (crumbs.length > 1) {
+          btnUp.classList.remove('hidden');
+        } else {
+          btnUp.classList.add('hidden');
+        }
+
+        crumbs.forEach((crumb, idx) => {
+          if (idx > 0) {
+            const sep = document.createElement('span');
+            sep.className = 'text-gray-500 mx-0.5';
+            sep.textContent = '›';
+            container.appendChild(sep);
+          }
+
+          const isLast = idx === crumbs.length - 1;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = crumb.name;
+          btn.className = isLast
+            ? 'text-[#00d2ff] font-extrabold truncate max-w-[200px]'
+            : 'text-gray-300 hover:text-white hover:underline truncate max-w-[160px]';
+
+          if (!isLast) {
+            btn.addEventListener('click', () => {
+              this.drive.navigateToBreadcrumb(idx);
+              this.loadDriveExplorerItems();
+            });
+          }
+          container.appendChild(btn);
+        });
+      }
+
+      async loadDriveExplorerItems({ append = false } = {}) {
+        const listEl = document.getElementById('driveFilesList');
+        const loadMoreWrapper = document.getElementById('driveLoadMoreWrapper');
+
+        this.setDriveError('');
+        this.updateDriveTabsUI();
+        this.renderDriveBreadcrumbs();
+
+        if (!this.drive.accessToken) {
+          loadMoreWrapper.classList.add('hidden');
+          listEl.innerHTML = `
+            <div class="text-center py-10 text-xs text-gray-500 border border-dashed border-[#262f3d] rounded-xl">
+              Conecta tu cuenta de Google arriba para explorar tus carpetas y secuencias <code class="text-gray-400">.zip</code>.
+            </div>
+          `;
+          return;
+        }
+
+        if (!append) {
+          loadMoreWrapper.classList.add('hidden');
+          listEl.innerHTML = `
+            <div class="text-center py-10 text-xs text-[#00d2ff] flex items-center justify-center gap-2">
+              <span class="w-4 h-4 rounded-full border-2 border-[#1f2937] border-t-[#00d2ff] animate-spin"></span>
+              <span>Cargando carpetas y archivos de Google Drive...</span>
+            </div>
+          `;
+        }
+
+        try {
+          await this.drive.fetchItems({ append });
+          this.renderDriveExplorerItems();
+        } catch (err) {
+          console.error(err);
+          this.setDriveError(err.message);
+          if (!this.drive.accessToken) {
+            document.getElementById('driveAuthStatusBar').classList.add('hidden');
+          }
+          listEl.innerHTML = `
+            <div class="text-center py-8 text-xs text-gray-500 border border-dashed border-[#262f3d] rounded-xl">
+              No se pudieron listar los elementos. Revisa el mensaje de error superior.
+            </div>
+          `;
+        }
+      }
+
+      renderDriveExplorerItems() {
+        const listEl = document.getElementById('driveFilesList');
+        const loadMoreWrapper = document.getElementById('driveLoadMoreWrapper');
+        const items = this.drive.items;
+
+        if (this.drive.nextPageToken) {
+          loadMoreWrapper.classList.remove('hidden');
+        } else {
+          loadMoreWrapper.classList.add('hidden');
+        }
+
+        if (!items || items.length === 0) {
+          listEl.innerHTML = `
+            <div class="text-center py-10 px-4 text-xs text-gray-400 border border-dashed border-[#262f3d] rounded-xl space-y-1">
+              <div class="font-bold text-gray-300">Esta carpeta está vacía o no tiene archivos .ZIP</div>
+              <div>Prueba cambiar a la pestaña <strong>Compartidos</strong>, <strong>Todos los .ZIP</strong> o usar el buscador superior.</div>
+            </div>
+          `;
+          return;
+        }
+
+        listEl.innerHTML = '';
+        items.forEach((item) => {
+          if (this.drive.isFolder(item)) {
+            const folderBtn = document.createElement('button');
+            folderBtn.type = 'button';
+            folderBtn.className = 'w-full bg-[#161b22] hover:bg-[#1f2937] border border-[#262f3d] hover:border-amber-400/40 rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-3 transition text-left group';
+            folderBtn.innerHTML = `
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <div class="w-9 h-9 rounded-lg bg-amber-400/15 text-amber-400 flex items-center justify-center shrink-0">
+                  <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                  </svg>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="text-xs sm:text-sm font-bold text-white group-hover:text-amber-300 truncate">${item.name}</div>
+                  <div class="text-[11px] text-gray-400">
+                    Carpeta ${item.modifiedTime ? `• Modificada ${formatDriveDate(item.modifiedTime)}` : ''}
+                  </div>
+                </div>
+              </div>
+              <span class="text-xs font-bold text-gray-400 group-hover:text-amber-300 px-2 shrink-0">Abrir ›</span>
+            `;
+
+            folderBtn.addEventListener('click', () => {
+              document.getElementById('driveSearchInput').value = '';
+              document.getElementById('btnClearDriveSearch').classList.add('hidden');
+              this.drive.openFolder(item.id, item.name);
+              this.loadDriveExplorerItems();
+            });
+
+            listEl.appendChild(folderBtn);
+          } else {
+            const parsed = ZipProcessor.parseZipFilename(item.name);
+            const alreadyDownloaded = this.songsMeta.some(
+              s => (s.driveFileId && s.driveFileId === item.id) || s.title.toLowerCase() === parsed.title.toLowerCase()
+            );
+
+            const row = document.createElement('div');
+            row.className = 'bg-[#161b22] border border-[#262f3d] rounded-xl px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5';
+            row.innerHTML = `
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <div class="w-9 h-9 rounded-lg bg-[#00d2ff]/15 text-[#00d2ff] flex items-center justify-center shrink-0 font-mono text-[10px] font-extrabold">
+                  ZIP
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-xs sm:text-sm font-bold text-white truncate" title="${item.name}">${item.name}</span>
+                    ${alreadyDownloaded ? '<span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">Ya descargada</span>' : ''}
+                  </div>
+                  <div class="text-[11px] font-mono text-gray-400 mt-0.5 flex flex-wrap items-center gap-1.5">
+                    <span class="text-[#00d2ff]">${parsed.key}</span>
+                    <span>•</span>
+                    <span>${parsed.bpm} BPM</span>
+                    <span>•</span>
+                    <span>${formatBytes(Number(item.size || 0))}</span>
+                    ${item.modifiedTime ? `<span>• ${formatDriveDate(item.modifiedTime)}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+              <button type="button" class="btn-download-drive px-3.5 py-2 rounded-xl text-xs font-extrabold transition shrink-0 ${
+                alreadyDownloaded
+                  ? 'bg-[#1f2937] hover:bg-[#2d3748] text-emerald-400 border border-emerald-500/30'
+                  : 'bg-[#00d2ff] hover:bg-[#00b8e6] text-[#0d1117]'
+              }">
+                ${alreadyDownloaded ? '↻ Re-descargar' : '⬇ Descargar'}
+              </button>
+            `;
+
+            row.querySelector('.btn-download-drive').addEventListener('click', () => this.downloadAndImportDriveFile(item));
+            listEl.appendChild(row);
+          }
+        });
+      }
+
+      async downloadAndImportDriveFile(file) {
+        try {
+          setLoading(true, `Descargando ${file.name}`, 'Conectando con Google Drive...', 10);
+          const zipBlob = await this.drive.downloadZipFile(file.id, (msg, pct) => {
+            setLoading(true, `Descargando ${file.name}`, msg, pct);
+          });
+          const songRecord = await ZipProcessor.processZipBlob(zipBlob, file.name, (msg, pct) => {
+            setLoading(true, `Extrayendo ${file.name}`, msg, pct);
+          });
+          songRecord.driveFileId = file.id;
+          await this.storage.saveSong(songRecord);
+
+          const activeSetlist = this.getActiveSetlist();
+          if (activeSetlist) {
+            activeSetlist.songIds.push(songRecord.id);
+            await this.storage.saveSetlist(activeSetlist);
+          }
+
+          await this.reloadCatalog();
+          this.renderDriveExplorerItems();
+          await this.selectAndLoadSong(songRecord.id);
+          document.getElementById('driveModal').classList.add('hidden');
+          showToast(`"${songRecord.title}" descargada y lista para tocar offline.`, 'success');
+        } catch (err) {
+          setLoading(false);
+          console.error(err);
+          showToast(`Error descargando de Drive: ${err.message}`, 'error');
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // CONFIGURACIÓN DE EVENTOS GLOBALES
+      // -----------------------------------------------------------------------
+      setupEventListeners() {
+        // Transporte
+        document.getElementById('btnPlayPause').addEventListener('click', async () => {
+          if (!this.engine.currentSong) {
+            showToast('Carga primero una canción o pulsa "Canción Demo".', 'info');
+            return;
+          }
+          if (this.engine.isPlaying) {
+            this.engine.pause();
+          } else {
+            await this.engine.play();
+          }
+          this.updateTransportUI();
+        });
+
+        document.getElementById('btnStop').addEventListener('click', () => {
+          this.engine.stop();
+          this.updateTransportUI();
+          this.drawWaveform();
+          document.getElementById('timeElapsed').textContent = '00:00';
+        });
+
+        document.getElementById('btnPrevSong').addEventListener('click', () => this.playAdjacentSong(-1));
+        document.getElementById('btnNextSong').addEventListener('click', () => this.playAdjacentSong(1));
+
+        document.getElementById('btnLoop').addEventListener('click', async () => {
+          await this.engine.setLooping(!this.engine.isLooping);
+          this.updateTransportUI();
+        });
+
+        window.addEventListener('keydown', (e) => {
+          if (e.code === 'Space' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+            e.preventDefault();
+            document.getElementById('btnPlayPause').click();
+          }
+        });
+
+        // Master Volume
+        document.getElementById('masterVolumeSlider').addEventListener('input', (e) => {
+          const val = parseFloat(e.target.value);
+          this.engine.setMasterVolume(val);
+          document.getElementById('masterVolumeLabel').textContent = `${Math.round(val * 100)}%`;
+        });
+
+        // Controles Reales de BPM (-, +, Reset, Editar)
+        const applyLiveBpmChange = async (newBpm) => {
+          if (!this.engine.currentSong) return;
+          await this.engine.setLiveBpm(newBpm);
+          this.updateTransportUI();
+          await this.persistCurrentSongPitchAndBpm();
+        };
+
+        document.getElementById('btnBpmDown').addEventListener('click', () => {
+          if (!this.engine.currentSong) return;
+          applyLiveBpmChange(this.engine.currentBpm - 1);
+        });
+
+        document.getElementById('btnBpmUp').addEventListener('click', () => {
+          if (!this.engine.currentSong) return;
+          applyLiveBpmChange(this.engine.currentBpm + 1);
+        });
+
+        document.getElementById('btnBpmReset').addEventListener('click', () => {
+          if (!this.engine.currentSong) return;
+          applyLiveBpmChange(this.engine.originalBpm);
+          showToast(`BPM restaurado a ${this.engine.originalBpm} BPM.`, 'info');
+        });
+
+        document.getElementById('btnEditBpm').addEventListener('click', async () => {
+          if (!this.engine.currentSong) return;
+          const res = await openCustomDialog({
+            title: `Tempo en Vivo (Original: ${this.engine.originalBpm} BPM)`,
+            defaultValue: String(this.engine.currentBpm)
+          });
+          const num = parseInt(res, 10);
+          if (num >= 40 && num <= 280) {
+            await applyLiveBpmChange(num);
+          }
+        });
+
+        // Controles Reales de TONO / Semitonos (-1, +1, Tonalidad Base, Reset)
+        const applyLivePitchChange = async (newSemitones) => {
+          if (!this.engine.currentSong) return;
+          await this.engine.setPitchSemitones(newSemitones);
+          this.updateTransportUI();
+          await this.persistCurrentSongPitchAndBpm();
+        };
+
+        document.getElementById('btnPitchDown').addEventListener('click', () => {
+          if (!this.engine.currentSong) return;
+          applyLivePitchChange(this.engine.pitchSemitones - 1);
+        });
+
+        document.getElementById('btnPitchUp').addEventListener('click', () => {
+          if (!this.engine.currentSong) return;
+          applyLivePitchChange(this.engine.pitchSemitones + 1);
+        });
+
+        document.getElementById('btnPitchReset').addEventListener('click', () => {
+          if (!this.engine.currentSong) return;
+          applyLivePitchChange(0);
+          showToast('Tonalidad restaurada al tono original (0 semitonos).', 'info');
+        });
+
+        document.getElementById('btnEditKey').addEventListener('click', async () => {
+          if (!this.engine.currentSong) return;
+          const res = await openCustomDialog({
+            title: 'Definir Tonalidad Original de la Canción',
+            defaultValue: String(this.engine.currentSong.baseKey)
+          });
+          if (res) {
+            this.engine.currentSong.baseKey = res;
+            this.engine.currentSong.key = PitchTransposer.transposeKeyLabel(res, this.engine.pitchSemitones);
+            const rec = await this.storage.getSong(this.engine.currentSong.id);
+            if (rec) {
+              rec.key = res;
+              await this.storage.saveSong(rec);
+              await this.reloadCatalog();
+            }
+            this.updateTransportUI();
+          }
+        });
+
+        // Split En Vivo vs Estéreo
+        document.getElementById('btnSplitLive').addEventListener('click', () => {
+          this.engine.applySplitRouting(true);
+          this.updateTransportUI();
+          this.renderMixer();
+          showToast('Modo Split En Vivo: CLICK a la Izquierda (L) e Instrumentos a la Derecha (R).', 'info');
+        });
+
+        document.getElementById('btnStereoCenter').addEventListener('click', () => {
+          this.engine.applySplitRouting(false);
+          this.updateTransportUI();
+          this.renderMixer();
+          showToast('Modo Estéreo: Todos los canales centrados.', 'info');
+        });
+
+        // Controles globales del mezclador
+        document.getElementById('btnUnmuteAll').addEventListener('click', () => {
+          this.engine.unmuteAll();
+          this.renderMixer();
+        });
+
+        document.getElementById('btnClearSolo').addEventListener('click', () => {
+          this.engine.clearSolo();
+          this.renderMixer();
+        });
+
+        // Importar ZIP Local
+        const triggerZipPicker = () => document.getElementById('localZipInput').click();
+        document.getElementById('btnImportLocalZip').addEventListener('click', triggerZipPicker);
+        document.getElementById('btnImportEmpty').addEventListener('click', triggerZipPicker);
+        document.getElementById('localZipInput').addEventListener('change', (e) => {
+          this.handleLocalZipFiles(e.target.files);
+          e.target.value = '';
+        });
+
+        // Cargar Canción Demo
+        document.getElementById('btnLoadDemoTop').addEventListener('click', () => this.handleLoadDemoSong());
+        document.getElementById('btnLoadDemoEmpty').addEventListener('click', () => this.handleLoadDemoSong());
+
+        // Setlists & Tabs
+        document.getElementById('setlistSelect').addEventListener('change', (e) => {
+          this.activeSetlistId = e.target.value;
+          localStorage.setItem('stagetrack_active_setlist_id', this.activeSetlistId);
+          this.renderSidebarLists();
+        });
+
+        document.getElementById('btnNewSetlist').addEventListener('click', async () => {
+          const name = await openCustomDialog({
+            title: 'Crear Nuevo Setlist',
+            defaultValue: 'Nuevo Evento En Vivo',
+            confirmText: 'Crear'
+          });
+          if (!name) return;
+          const newSetlist = { id: generateId('set'), name, songIds: [] };
+          await this.storage.saveSetlist(newSetlist);
+          this.activeSetlistId = newSetlist.id;
+          localStorage.setItem('stagetrack_active_setlist_id', this.activeSetlistId);
+          await this.reloadCatalog();
+          showToast(`Setlist "${name}" creado.`, 'success');
+        });
+
+        document.getElementById('btnShareSetlist').addEventListener('click', () => {
+          this.openShareSetlistModal();
+        });
+
+        document.getElementById('btnDeleteSetlist').addEventListener('click', async () => {
+          if (this.setlists.length <= 1) {
+            showToast('Debe existir al menos un setlist.', 'error');
+            return;
+          }
+          const current = this.getActiveSetlist();
+          const ok = await openCustomDialog({
+            title: 'Eliminar Setlist',
+            message: `¿Eliminar el setlist "${current.name}"? (Tus canciones seguirán guardadas en la Biblioteca Offline)`,
+            confirmText: 'Eliminar Setlist',
+            isDanger: true
+          });
+          if (!ok) return;
+          await this.storage.deleteSetlist(current.id);
+          await this.reloadCatalog();
+          showToast('Setlist eliminado.', 'info');
+        });
+
+        const switchSidebarTab = (tab) => {
+          this.activeSidebarTab = tab;
+          const btnSet = document.getElementById('tabSetlistView');
+          const btnLib = document.getElementById('tabLibraryView');
+          const boxSet = document.getElementById('setlistSongsContainer');
+          const boxLib = document.getElementById('librarySongsContainer');
+          const searchLib = document.getElementById('librarySearchWrapper');
+
+          if (tab === 'setlist') {
+            btnSet.className = 'py-2 rounded-lg text-xs font-extrabold bg-[#1f2937] text-[#00d2ff] transition';
+            btnLib.className = 'py-2 rounded-lg text-xs font-extrabold text-gray-400 hover:text-white transition';
+            boxSet.classList.remove('hidden');
+            boxLib.classList.add('hidden');
+            searchLib.classList.add('hidden');
+          } else {
+            btnLib.className = 'py-2 rounded-lg text-xs font-extrabold bg-[#1f2937] text-[#00d2ff] transition';
+            btnSet.className = 'py-2 rounded-lg text-xs font-extrabold text-gray-400 hover:text-white transition';
+            boxLib.classList.remove('hidden');
+            searchLib.classList.remove('hidden');
+            boxSet.classList.add('hidden');
+          }
+        };
+
+        document.getElementById('tabSetlistView').addEventListener('click', () => switchSidebarTab('setlist'));
+        document.getElementById('tabLibraryView').addEventListener('click', () => switchSidebarTab('library'));
+        document.getElementById('btnAddFromLibraryToSetlist').addEventListener('click', () => switchSidebarTab('library'));
+
+        document.getElementById('librarySearchInput').addEventListener('input', (e) => {
+          this.librarySearchTerm = e.target.value;
+          this.renderSidebarLists();
+        });
+
+        // Modal Compartir Setlist
+        document.getElementById('btnCloseShareModal').addEventListener('click', () => {
+          document.getElementById('shareSetlistModal').classList.add('hidden');
+        });
+
+        document.getElementById('btnCopyShareUrl').addEventListener('click', () => {
+          const input = document.getElementById('shareUrlInput');
+          input.select();
+          document.execCommand('copy');
+          showToast('Enlace del setlist copiado. Envíalo por WhatsApp al grupo.', 'success');
+        });
+
+        document.getElementById('btnCopyWhatsappText').addEventListener('click', () => {
+          const area = document.getElementById('shareWhatsappText');
+          area.select();
+          document.execCommand('copy');
+          showToast('Lista en texto copiada al portapapeles.', 'success');
+        });
+
+        document.getElementById('btnExportSetlistJson').addEventListener('click', () => {
+          this.exportActiveSetlistJson();
+        });
+
+        // Importar archivo .stagetrack.json
+        document.getElementById('btnImportSetlistFile').addEventListener('click', () => {
+          document.getElementById('setlistFileInput').click();
+        });
+
+        document.getElementById('setlistFileInput').addEventListener('change', async (e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (!file) return;
+          try {
+            const text = await file.text();
+            const parsed = JSON.parse(text);
+            if (!parsed || !parsed.name || !Array.isArray(parsed.songs)) {
+              throw new Error('El archivo seleccionado no es un setlist válido de StageTrack.');
+            }
+            this.openIncomingSetlistModal({
+              name: parsed.name,
+              songs: parsed.songs.map(s => ({
+                title: s.title || 'Canción',
+                key: s.key || '—',
+                bpm: s.bpm || 120,
+                driveFileId: s.driveFileId || null,
+                zipFilename: s.zipFilename || `${s.title}.zip`
+              }))
+            });
+          } catch (err) {
+            showToast(`Error leyendo archivo: ${err.message}`, 'error');
+          }
+        });
+
+        // Modal Setlist Compartido Recibido
+        document.getElementById('btnCloseIncomingModal').addEventListener('click', () => {
+          document.getElementById('incomingSetlistModal').classList.add('hidden');
+          this.pendingIncomingSetlist = null;
+        });
+
+        document.getElementById('btnSaveIncomingSetlist').addEventListener('click', () => {
+          this.saveIncomingSetlistToLibrary();
+        });
+
+        // Modal Explorador Google Drive
+        document.getElementById('btnOpenDriveModal').addEventListener('click', () => {
+          document.getElementById('driveModal').classList.remove('hidden');
+          if (this.drive.accessToken && this.drive.items.length === 0) {
+            this.loadDriveExplorerItems();
+          }
+        });
+        document.getElementById('btnCloseDriveModal').addEventListener('click', () => {
+          document.getElementById('driveModal').classList.add('hidden');
+        });
+
+        document.getElementById('btnCopyOrigin').addEventListener('click', () => {
+          const temp = document.createElement('input');
+          temp.value = window.location.origin;
+          document.body.appendChild(temp);
+          temp.select();
+          document.execCommand('copy');
+          document.body.removeChild(temp);
+          showToast('URL copiada al portapapeles.', 'success');
+        });
+
+        document.getElementById('btnConnectGoogleDrive').addEventListener('click', async () => {
+          const clientIdVal = document.getElementById('googleClientIdInput').value.trim();
+          this.drive.setClientId(clientIdVal);
+          this.setDriveError('');
+          try {
+            await this.drive.authenticate();
+            document.getElementById('driveAuthStatusBar').classList.remove('hidden');
+            this.drive.resetToMode(this.drive.mode);
+            await this.loadDriveExplorerItems();
+            showToast('Conectado a Google Drive.', 'success');
+          } catch (err) {
+            console.error(err);
+            this.setDriveError(err.message);
+            showToast(err.message, 'error');
+          }
+        });
+
+        document.getElementById('btnRefreshDriveFiles').addEventListener('click', () => {
+          this.loadDriveExplorerItems();
+        });
+
+        document.getElementById('btnDisconnectDrive').addEventListener('click', () => {
+          this.drive.disconnect();
+          document.getElementById('driveAuthStatusBar').classList.add('hidden');
+          document.getElementById('driveLoadMoreWrapper').classList.add('hidden');
+          this.setDriveError('');
+          document.getElementById('driveFilesList').innerHTML =
+            '<div class="text-center py-8 text-xs text-gray-500 border border-dashed border-[#262f3d] rounded-xl">Sesión de Google Drive cerrada.</div>';
+        });
+
+        document.querySelectorAll('.drive-mode-tab').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            document.getElementById('driveSearchInput').value = '';
+            document.getElementById('btnClearDriveSearch').classList.add('hidden');
+            this.drive.resetToMode(btn.dataset.driveMode);
+            this.loadDriveExplorerItems();
+          });
+        });
+
+        document.getElementById('btnDriveNavigateUp').addEventListener('click', () => {
+          if (this.drive.breadcrumbs.length > 1) {
+            this.drive.navigateToBreadcrumb(this.drive.breadcrumbs.length - 2);
+            this.loadDriveExplorerItems();
+          }
+        });
+
+        const driveSearchInput = document.getElementById('driveSearchInput');
+        const btnClearSearch = document.getElementById('btnClearDriveSearch');
+
+        driveSearchInput.addEventListener('input', (e) => {
+          const val = e.target.value;
+          btnClearSearch.classList.toggle('hidden', val.trim().length === 0);
+          clearTimeout(this.driveSearchDebounce);
+          this.driveSearchDebounce = setTimeout(() => {
+            this.drive.searchQuery = val;
+            this.drive.nextPageToken = null;
+            this.loadDriveExplorerItems();
+          }, 350);
+        });
+
+        btnClearSearch.addEventListener('click', () => {
+          driveSearchInput.value = '';
+          btnClearSearch.classList.add('hidden');
+          this.drive.searchQuery = '';
+          this.drive.nextPageToken = null;
+          this.loadDriveExplorerItems();
+        });
+
+        document.getElementById('btnDriveLoadMore').addEventListener('click', () => {
+          this.loadDriveExplorerItems({ append: true });
+        });
+
+        // Botón de emergencia para cerrar el modal de carga si alguna pista tarda demasiado
+        document.getElementById('btnCancelLoadingOverlay').addEventListener('click', () => {
+          setLoading(false);
+          showToast('Carga cancelada por el usuario.', 'info');
+        });
+      }
+    }
+
+    // Arrancar aplicación cuando el DOM esté listo
+    window.addEventListener('DOMContentLoaded', async () => {
+      const app = new StageTrackApp();
+      window.stageTrackApp = app;
+      await app.init();
+    });
+  </script>
+</body>
+</html>
